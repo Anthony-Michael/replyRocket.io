@@ -9,7 +9,7 @@ This enables imports like 'from app.schemas import Token' to work properly.
 from app.schemas.token import Token, TokenPayload
 
 # Import User schemas from user.py
-from app.schemas.user import User, UserCreate, UserInDB, UserUpdate
+from app.schemas.user import User, UserCreate, UserInDB, UserUpdate, SMTPConfig
 
 # Import Email schemas from email.py
 from app.schemas.email import (
@@ -42,6 +42,7 @@ __all__ = [
     "UserCreate",
     "UserUpdate",
     "UserInDB",
+    "SMTPConfig",
     
     # Email schemas
     "Email",
