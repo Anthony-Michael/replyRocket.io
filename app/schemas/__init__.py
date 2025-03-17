@@ -29,7 +29,7 @@ from app.schemas.email import (
 from app.schemas.campaign import Campaign, CampaignCreate, CampaignStats, CampaignUpdate
 
 # Import A/B Testing configuration schema from ab_test_config.py
-from app.schemas.ab_test_config import ABTestConfig, ABTestConfigCreate, ABTestConfigUpdate
+from app.schemas.ab_test_config import ABTestConfig
 
 # Define __all__ to explicitly specify what is exported from this package
 __all__ = [
@@ -62,7 +62,5 @@ __all__ = [
     "CampaignStats",
     
     # A/B Testing schemas
-    "ABTestConfig",
-    "ABTestConfigCreate",
-    "ABTestConfigUpdate"
+    "ABTestConfig"
 ] 
