@@ -16,6 +16,15 @@ Our production deployment uses:
 2. Render account: [signup at render.com](https://render.com/)
 3. Sentry account: [signup at sentry.io](https://sentry.io/)
 
+## Deployment Files
+
+The following files in the `/infrastructure` directory are used for production deployment:
+
+- `Dockerfile` - Container definition for the application
+- `docker-compose.prod.yml` - Docker Compose configuration for production
+- `Caddyfile` - Caddy server configuration for HTTPS and routing
+- `.github/workflows/deploy.yml` - GitHub Actions workflow for CI/CD
+
 ## Step 1: Set Up Sentry Project
 
 1. Create a new Sentry project:

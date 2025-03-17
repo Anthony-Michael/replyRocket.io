@@ -7,6 +7,16 @@ This document provides instructions for running the ReplyRocket.io backend using
 - [Docker](https://docs.docker.com/get-docker/)
 - [Docker Compose](https://docs.docker.com/compose/install/)
 
+## Docker Files
+
+All Docker-related files are located in the `/infrastructure` directory:
+
+- `Dockerfile` - Main production container definition
+- `Dockerfile.dev` - Development container with hot-reloading
+- `docker-compose.yml` - Configuration for local development
+- `docker-compose.prod.yml` - Configuration for production
+- `.dockerignore` - Files to exclude from container builds
+
 ## Configuration
 
 ### Environment Variables
@@ -28,7 +38,7 @@ OPENAI_API_KEY=your-openai-api-key
 
 ## Development Setup
 
-For local development, we use `docker-compose.yml` with `Dockerfile.dev`, which provides hot-reloading and development tools.
+For local development, we use `infrastructure/docker-compose.yml` with `infrastructure/Dockerfile.dev`, which provides hot-reloading and development tools.
 
 ### Starting the Development Environment
 
@@ -42,6 +52,7 @@ For local development, we use `docker-compose.yml` with `Dockerfile.dev`, which 
 
 3. Start the development services:
    ```bash
+   cd infrastructure
    docker-compose up -d
    ```
 

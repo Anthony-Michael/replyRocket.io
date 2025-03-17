@@ -28,23 +28,32 @@ var/
 .env
 .venv
 .flaskenv
+.env.*
+!.env.example
 
 # IDE specific files
 .idea/
 .vscode/
 *.swp
 *.swo
+.vs/
+*.sublime-project
+*.sublime-workspace
 
 # OS specific files
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # Logs
 *.log
+logs/
+npm-debug.log*
 
 # Database
 *.db
 *.sqlite3
+*.sqlite
 
 # Unit test / coverage
 .pytest_cache/
@@ -52,11 +61,45 @@ Thumbs.db
 htmlcov/
 coverage_reports/
 test.db
-
-# Environment variables
-.env.local
+.hypothesis/
+.nox/
+nosetests.xml
+coverage.xml
+*.cover
 
 # Local development files
 *.dev.yml
 *.dev.yaml
-local_settings.py 
+local_settings.py
+local.py
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# mypy
+.mypy_cache/
+
+# Python artifacts
+.pyre/
+.pytype/
+.ruff_cache/
+
+# Package specific
+node_modules/
+.npm/
+.eslintcache
+.yarn/
+
+# Generated docs
+docs/_build/
+/site 
