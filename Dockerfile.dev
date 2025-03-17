@@ -1,0 +1,37 @@
+FROM python:3.10-slim
+
+# Set working directory
+WORKDIR /app
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=off \
+    PIP_DISABLE_PIP_VERSION_CHECK=on
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    python3-dev \
+    libpq-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install dependencies - use a requirements.txt if present, otherwise use pyproject.toml
+COPY requirements.txt* pyproject.toml* poetry.lock* ./
+RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; \
+    elif [ -f pyproject.toml ]; then pip install --no-cache-dir poetry && poetry config virtualenvs.create false && poetry install --no-interaction --no-ansi; \
+    fi
+
+# Install additional development dependencies
+RUN pip install --no-cache-dir pytest pytest-cov ipython
+
+# The rest of the code will be mounted as a volume in docker-compose
+# but we need to create the directory structure first
+RUN mkdir -p /app/app /app/logs
+
+# Expose the port
+EXPOSE 8000
+
+# Set the default command to run the FastAPI server with hot reloading
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"] 

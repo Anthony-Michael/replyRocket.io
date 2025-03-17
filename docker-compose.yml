@@ -1,31 +1,45 @@
-version: '3'
+version: '3.8'
 
 services:
   api:
-    build: .
-    ports:
-      - "8000:8000"
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
     volumes:
       - .:/app
+      - ./data/logs:/app/logs
+    ports:
+      - "8000:8000"
     environment:
-      - POSTGRES_SERVER=db
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=replyrocket
+      - ENVIRONMENT=development
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/replyrocket
+      - SECRET_KEY=developmentsecretkey
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - BACKEND_CORS_ORIGINS=["http://localhost:3000","http://localhost:8000"]
     depends_on:
       - db
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   db:
-    image: postgres:13
+    image: postgres:14-alpine
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=replyrocket
+      - postgres_data:/var/lib/postgresql/data/
     ports:
       - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=replyrocket
+
+  pgadmin:
+    image: dpage/pgadmin4
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@replyrocket.io
+      - PGADMIN_DEFAULT_PASSWORD=admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - db
 
 volumes:
   postgres_data: 
