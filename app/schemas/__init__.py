@@ -23,6 +23,9 @@ from app.schemas.ab_test_config import ABTestConfig  # Import ABTestConfig schem
 # Import Email Generation Response schema from email_gen_response.py
 from app.schemas.email_gen_response import EmailGenResponse  # Import EmailGenResponse schema to fix import error
 
+# Import Email Generation Request schema from email_gen_request.py
+from app.schemas.email_gen_request import EmailGenRequest  # Import EmailGenRequest schema to fix import error
+
 # Define __all__ to explicitly specify what is exported from this package
 __all__ = [
     # Token schemas
@@ -49,5 +52,8 @@ __all__ = [
     "ABTestConfig",  # Added ABTestConfig to the exported schemas
     
     # Email Generation Response schema
-    "EmailGenResponse"  # Added EmailGenResponse to the exported schemas
+    "EmailGenResponse",  # Added EmailGenResponse to the exported schemas
+    
+    # Email Generation Request schema
+    "EmailGenRequest"  # Added EmailGenRequest to the exported schemas
 ] 
