@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     # 60 minutes * 24 hours * 8 days = 8 days
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8
     
+    # Application version and environment
+    VERSION: str = "1.0.0"
+    ENVIRONMENT: str = "development"  # Options: development, staging, production
+    
     # CORS Configuration
     BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
 
@@ -93,11 +97,14 @@ class Settings(BaseSettings):
 settings = Settings()
 
 # DEBUG: Print environment variable values for debugging
-print("\n" + "="*50)
-print("ENVIRONMENT VARIABLE DEBUGGING")
-print("="*50)
-print(f"TEST_VAR_ONE: '{settings.TEST_VAR_ONE}' (default is 'default_value_one')")
-print(f"TEST_VAR_TWO: '{settings.TEST_VAR_TWO}' (default is 'default_value_two')")
-print(f"SQLALCHEMY_DATABASE_URI: '{settings.SQLALCHEMY_DATABASE_URI}'")
-print(f".env file location: {os.path.abspath('.env') if os.path.exists('.env') else '.env NOT FOUND!'}")
-print("="*50 + "\n") 
+if settings.ENVIRONMENT == "development":
+    print("\n" + "="*50)
+    print("ENVIRONMENT VARIABLE DEBUGGING")
+    print("="*50)
+    print(f"ENVIRONMENT: '{settings.ENVIRONMENT}'")
+    print(f"VERSION: '{settings.VERSION}'")
+    print(f"TEST_VAR_ONE: '{settings.TEST_VAR_ONE}' (default is 'default_value_one')")
+    print(f"TEST_VAR_TWO: '{settings.TEST_VAR_TWO}' (default is 'default_value_two')")
+    print(f"SQLALCHEMY_DATABASE_URI: '{settings.SQLALCHEMY_DATABASE_URI}'")
+    print(f".env file location: {os.path.abspath('.env') if os.path.exists('.env') else '.env NOT FOUND!'}")
+    print("="*50 + "\n") 

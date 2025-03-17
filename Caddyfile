@@ -1,0 +1,49 @@
+{
+    # Global Caddy settings
+    email your-email@example.com  # Change this to your email for Let's Encrypt notifications
+}
+
+# Replace with your actual domain
+api.replyrocket.io {
+    # Enable automatic HTTPS
+    tls {
+        protocols tls1.2 tls1.3
+    }
+
+    # Reverse proxy to the FastAPI service
+    reverse_proxy api:8000 {
+        # Health checks
+        health_path /api/v1/health
+        health_interval 30s
+        health_timeout 10s
+        health_status 200
+        
+        # Headers
+        header_up Host {http.request.host}
+        header_up X-Real-IP {http.request.remote}
+        header_up X-Forwarded-For {http.request.remote}
+        header_up X-Forwarded-Proto {http.request.scheme}
+    }
+
+    # Security headers
+    header {
+        # Enable HTTP Strict Transport Security (HSTS)
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        # Prevent MIME type sniffing
+        X-Content-Type-Options "nosniff"
+        # Enable XSS protection
+        X-XSS-Protection "1; mode=block"
+        # Prevent clickjacking
+        X-Frame-Options "DENY"
+        # Enable referrer policy
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # Remove Server header
+        -Server
+    }
+
+    # Logging
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+} 
