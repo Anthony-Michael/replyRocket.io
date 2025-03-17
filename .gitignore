@@ -44,4 +44,19 @@ Thumbs.db
 
 # Database
 *.db
-*.sqlite3 
+*.sqlite3
+
+# Unit test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+coverage_reports/
+test.db
+
+# Environment variables
+.env.local
+
+# Local development files
+*.dev.yml
+*.dev.yaml
+local_settings.py 

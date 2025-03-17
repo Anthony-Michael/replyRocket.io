@@ -1,266 +1,273 @@
 """
-Test configuration and fixtures for pytest.
+Test fixtures for the ReplyRocket application.
 
-This module provides fixtures for testing the FastAPI application,
-including database setup, client, and authentication helpers.
+This module contains fixtures used across various test modules to
+ensure consistent test setup.
 """
 
 import os
 import pytest
-import asyncio
-from typing import Dict, Generator, List
+from typing import Dict, Generator, Any, List
+from unittest.mock import Mock, patch
+
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-from sqlalchemy_utils import database_exists, create_database, drop_database
+from sqlalchemy.orm import sessionmaker, Session
 
-from app.main import app
-from app.db.session import Base
-from app.api import deps
 from app.core.config import settings
 from app.core import security
+from app.db.base import Base
+from app.api.deps import get_db
+from app.main import app
 from app import crud, models, schemas
 
-# Test database URL - using SQLite in-memory for tests
-TEST_DATABASE_URL = "sqlite:///./test.db"
 
-# Create test engine
+# Use SQLite in-memory database for testing
+SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
 engine = create_engine(
-    TEST_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
+    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
 )
-
-# Create test session factory
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-def get_test_db():
+@pytest.fixture(scope="function")
+def db() -> Generator:
     """
-    Return a test database session.
+    Create a fresh database for each test, then drop all tables after the test.
     
-    This function overrides the default get_db dependency in the application
-    to use the test database instead.
+    Returns:
+        Generator yielding a SQLAlchemy Session
     """
+    # Create the database
+    Base.metadata.create_all(bind=engine)
+    
+    # Create a new session for the test
+    db = TestingSessionLocal()
     try:
-        db = TestingSessionLocal()
         yield db
     finally:
         db.close()
-
-
-@pytest.fixture(scope="session")
-def setup_test_db():
-    """
-    Set up the test database.
-    
-    Creates all tables before tests run and drops them after tests complete.
-    """
-    # Create tables
-    Base.metadata.create_all(bind=engine)
-    yield
-    # Drop tables after tests complete
+        
+    # Drop all tables after the test
     Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture(scope="function")
-def db(setup_test_db):
+def client(db: Session) -> TestClient:
     """
-    Create a fresh test database session for each test function.
+    Create a FastAPI TestClient with a dependency override for the database.
     
-    Provides transaction isolation between tests and rollback after each test.
+    Args:
+        db: The database session fixture
+        
+    Returns:
+        A FastAPI TestClient
     """
-    connection = engine.connect()
-    transaction = connection.begin()
-    session = TestingSessionLocal(bind=connection)
-    
-    # Use the session for the tests
-    yield session
-    
-    # Rollback transaction to reset the database after the test
-    session.close()
-    transaction.rollback()
-    connection.close()
+    def override_get_db() -> Generator:
+        try:
+            yield db
+        finally:
+            pass
 
-
-@pytest.fixture
-def client(db) -> Generator:
-    """
-    Create a FastAPI TestClient with the test database session.
+    app.dependency_overrides[get_db] = override_get_db
     
-    Overrides the default get_db dependency to use the test database,
-    ensuring tests don't affect the real database.
-    """
-    # Override the get_db dependency
-    app.dependency_overrides[deps.get_db] = lambda: db
-    
-    # Return a test client
-    with TestClient(app) as test_client:
-        yield test_client
+    # Return the test client
+    with TestClient(app) as client:
+        yield client
     
     # Clear dependency overrides after test
-    app.dependency_overrides.clear()
+    app.dependency_overrides = {}
 
 
-@pytest.fixture
-def create_test_user(db):
+@pytest.fixture(scope="function")
+def test_user(db: Session) -> models.User:
     """
-    Create a test user in the database.
+    Create a test user for authentication tests.
     
-    This fixture creates a user that can be used for authentication tests.
-    Returns the user object and plain password.
+    Args:
+        db: The database session fixture
+        
+    Returns:
+        A User model instance for testing
     """
-    # Create a new user
     user_in = schemas.UserCreate(
-        email="test@example.com",
-        password="Test1234!",  # Strong password to pass validation
+        email="testuser@example.com",
+        password="TestPassword123!",
         full_name="Test User"
     )
-    user = crud.user.get_by_email(db, email=user_in.email)
     
-    if not user:
-        user = crud.user.create(db, obj_in=user_in)
+    # Create user with SMTP settings
+    user = crud.user.create(db, obj_in=user_in)
     
-    return {
-        "user": user,
-        "email": user_in.email,
-        "password": user_in.password
+    # Update with SMTP settings
+    smtp_settings = {
+        "smtp_host": "smtp.example.com",
+        "smtp_port": "587",
+        "smtp_user": "smtp_user",
+        "smtp_password": "smtp_password",
+        "smtp_use_tls": True
     }
-
-
-@pytest.fixture
-def auth_token(client, create_test_user) -> str:
-    """
-    Get an authentication token for the test user.
+    user_update = schemas.UserUpdate(**smtp_settings)
+    user = crud.user.update(db, db_obj=user, obj_in=user_update)
     
-    Authenticates with the test user and returns the access token
-    for authenticated endpoint tests.
+    return user
+
+
+@pytest.fixture(scope="function")
+def test_superuser(db: Session) -> models.User:
     """
-    login_data = {
-        "username": create_test_user["email"],  # OAuth2 form uses username for email
-        "password": create_test_user["password"],
-    }
-    response = client.post("/api/v1/auth/login/access-token", data=login_data)
-    assert response.status_code == 200
+    Create a test superuser for admin-level tests.
     
-    token = response.json()["access_token"]
-    return token
-
-
-@pytest.fixture
-def auth_headers(auth_token) -> Dict[str, str]:
+    Args:
+        db: The database session fixture
+        
+    Returns:
+        A User model instance with superuser privileges
     """
-    Create authorization headers with the test user's token.
-    
-    This fixture provides headers that can be used for authenticated requests.
-    """
-    return {"Authorization": f"Bearer {auth_token}"}
+    user_in = schemas.UserCreate(
+        email="admin@example.com",
+        password="AdminPassword123!",
+        full_name="Admin User",
+        is_superuser=True
+    )
+    user = crud.user.create(db, obj_in=user_in)
+    return user
 
 
-@pytest.fixture
-def create_test_campaign(db, create_test_user):
+@pytest.fixture(scope="function")
+def test_campaign(db: Session, test_user: models.User) -> models.Campaign:
     """
     Create a test campaign for the test user.
     
-    This fixture provides a campaign that can be used for testing
-    email generation and other campaign-related endpoints.
+    Args:
+        db: The database session fixture
+        test_user: The test user fixture
+        
+    Returns:
+        A Campaign model instance for testing
     """
     campaign_in = schemas.CampaignCreate(
         name="Test Campaign",
-        description="Campaign for testing",
-        industry="Technology",
-        target_job_title="Developer",
-        pain_points="Testing difficulties",
-        follow_up_days=3,
-        max_follow_ups=2,
-        ab_test_active=False
+        description="Test campaign description",
+        target_audience="Test audience",
+        is_active=True
     )
-    
     campaign = crud.campaign.create_with_user(
-        db=db, 
-        obj_in=campaign_in, 
-        user_id=create_test_user["user"].id
+        db=db, obj_in=campaign_in, user_id=test_user.id
+    )
+    return campaign
+
+
+@pytest.fixture(scope="function")
+def token_headers(test_user: models.User) -> Dict[str, str]:
+    """
+    Create authorization headers with JWT token for the test user.
+    
+    Args:
+        test_user: The test user fixture
+        
+    Returns:
+        Headers dictionary with Authorization bearer token
+    """
+    token = security.create_access_token(test_user.id)
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture(scope="function")
+def superuser_token_headers(test_superuser: models.User) -> Dict[str, str]:
+    """
+    Create authorization headers with JWT token for the test superuser.
+    
+    Args:
+        test_superuser: The test superuser fixture
+        
+    Returns:
+        Headers dictionary with Authorization bearer token
+    """
+    token = security.create_access_token(test_superuser.id)
+    return {"Authorization": f"Bearer {token}"}
+
+
+# Mocks for external services
+@pytest.fixture(scope="function")
+def mock_openai_response():
+    """
+    Mock the OpenAI API response for email generation.
+    
+    Returns:
+        A mock OpenAI API response with email content
+    """
+    class MockChoice:
+        def __init__(self, content):
+            self.message = Mock(content=content)
+    
+    class MockResponse:
+        def __init__(self, content):
+            self.choices = [MockChoice(content)]
+    
+    email_json = '''
+    {
+        "subject": "Test Subject Line",
+        "body_text": "This is a test plain text email body.",
+        "body_html": "<p>This is a test HTML email body.</p>"
+    }
+    '''
+    
+    return MockResponse(email_json)
+
+
+@pytest.fixture(scope="function")
+def mock_email_generator(monkeypatch, mock_openai_response):
+    """
+    Mock the AI email generator service.
+    
+    Args:
+        monkeypatch: pytest monkeypatch fixture
+        mock_openai_response: Mock OpenAI API response fixture
+        
+    Returns:
+        A patched version of the generate_email function
+    """
+    from app.schemas.email import EmailGenResponse
+    import json
+    
+    def mock_generate(*args, **kwargs):
+        content = mock_openai_response.choices[0].message.content
+        email_data = json.loads(content)
+        return EmailGenResponse(**email_data)
+    
+    # Patch the generate_email function in the service
+    monkeypatch.setattr("app.services.ai_email_generator.generate_email", mock_generate)
+    
+    # Patch the OpenAI client's create method
+    monkeypatch.setattr(
+        "app.services.ai_email_generator.client.chat.completions.create",
+        Mock(return_value=mock_openai_response)
     )
     
-    return campaign 
+    return mock_generate
 
 
-@pytest.fixture
-def mock_ai_service(monkeypatch):
+@pytest.fixture(scope="function")
+def mock_smtp_client(monkeypatch):
     """
-    Mock the AI service client for email generation tests.
+    Mock the SMTP client used for sending emails.
     
-    This fixture patches the external AI service client to return predefined responses
-    instead of making actual API calls during testing.
+    Args:
+        monkeypatch: pytest monkeypatch fixture
+        
+    Returns:
+        A patched version of the send_email function that always succeeds
     """
-    class MockAIResponse:
-        """Mock response from the AI service."""
-        def __init__(self, content=None, error=None):
-            self.content = content
-            self.error = error
-            
-        async def content_as_json(self):
-            """Return predefined content or raise an error if specified."""
-            if self.error:
-                raise self.error
-            return self.content
+    async def mock_send_email_async(*args, **kwargs):
+        return True
     
-    class MockAIClient:
-        """Mock AI client that returns predefined responses."""
-        def __init__(self):
-            self.response = None
-            
-        def set_response(self, content=None, error=None):
-            """Set the response to be returned by the mock."""
-            self.response = MockAIResponse(content, error)
-            
-        async def generate(self, prompt, **kwargs):
-            """Return the predefined response."""
-            return self.response
+    def mock_send_email(*args, **kwargs):
+        return True
     
-    # Create a mock client instance
-    mock_client = MockAIClient()
-    
-    # Set up a default successful response
-    default_response = {
-        "subject": "Test Email Subject",
-        "body_text": "This is a test email body in plain text.",
-        "body_html": "<p>This is a test email body in HTML.</p>",
-        "message_type": "INITIAL_OUTREACH"
-    }
-    mock_client.set_response(content=default_response)
-    
-    # Patch the AI service client
-    from app.services import ai_service
-    monkeypatch.setattr(ai_service, "get_ai_client", lambda: mock_client)
-    
-    return mock_client
-
-
-@pytest.fixture
-def mock_smtp_service(monkeypatch):
-    """
-    Mock the SMTP service for email sending tests.
-    
-    This fixture patches the email sending functionality to avoid
-    actually sending emails during tests.
-    """
-    class MockSMTPResponse:
-        """Mock response from the SMTP service."""
-        def __init__(self, is_sent=True, error=None):
-            self.is_sent = is_sent
-            self.error = error
-            self.id = "test-email-123"
-            self.tracking_id = "track-456"
-    
-    # Create a mock send_email function
-    async def mock_send_email(*args, **kwargs):
-        """Mock function that returns a successful email response."""
-        return MockSMTPResponse()
-    
-    # Patch the email sending function
-    from app.services import email_service
-    monkeypatch.setattr(email_service, "send_email", mock_send_email)
+    # Patch both sync and async email sending functions
+    monkeypatch.setattr("app.services.email_sender.send_email_async", mock_send_email_async)
+    monkeypatch.setattr("app.services.email_sender.send_email", mock_send_email)
     
     return mock_send_email 

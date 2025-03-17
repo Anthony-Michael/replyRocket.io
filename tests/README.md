@@ -1,60 +1,126 @@
-# ReplyRocket API Test Suite
+# ReplyRocket.io Test Suite
 
-This directory contains the test suite for the ReplyRocket API, implemented using pytest.
+This directory contains comprehensive unit tests for the ReplyRocket.io FastAPI backend application.
+
+## Overview
+
+The test suite is designed to ensure the reliability and correctness of the API endpoints, covering:
+
+- Authentication (registration, login)
+- Campaign management (CRUD operations, A/B testing)
+- Email generation (AI-powered content creation)
+- Email sending and tracking
+
+All tests use mocks for external dependencies (OpenAI API, SMTP servers) to ensure tests run quickly and without external dependencies.
 
 ## Test Structure
 
-- `conftest.py`: Contains pytest fixtures shared across test files
-- `test_auth.py`: Tests for authentication endpoints
-- `test_emails.py`: Tests for email generation and sending endpoints
-- `test_campaigns.py`: Tests for campaign management endpoints
+- `conftest.py` - Contains pytest fixtures used across test modules
+- `test_auth.py` - Tests for authentication endpoints
+- `test_campaigns.py` - Tests for campaign management endpoints
+- `test_emails.py` - Tests for email generation and sending endpoints
 
 ## Running Tests
 
-To run the full test suite:
+### Option 1: Using the test runner script
+
+The easiest way to run all tests is using the provided script:
 
 ```bash
-pytest
+python run_tests.py
 ```
 
-To run tests with verbose output:
+This will:
+1. Run all tests with coverage reporting
+2. Display results in the terminal
+3. Generate an HTML coverage report
+4. Open the coverage report in your browser
+
+### Option 2: Using pytest directly
+
+You can also run specific tests or test modules using pytest directly:
 
 ```bash
-pytest -v
-```
+# Run all tests
+pytest tests/
 
-To run a specific test file:
+# Run with verbose output
+pytest -v tests/
 
-```bash
+# Run specific test file
 pytest tests/test_auth.py
+
+# Run specific test
+pytest tests/test_auth.py::test_register_user
+
+# Run tests by marker
+pytest -m auth
+pytest -m campaigns
+pytest -m emails
 ```
 
-To run a specific test:
+## Coverage Reports
+
+To generate coverage reports:
 
 ```bash
-pytest tests/test_auth.py::TestAuth::test_register_user
+# Generate terminal report
+pytest --cov=app tests/
+
+# Generate terminal report with missing lines
+pytest --cov=app --cov-report=term-missing tests/
+
+# Generate HTML report
+pytest --cov=app --cov-report=html tests/
 ```
 
-## Test Database
+The HTML report will be generated in the `htmlcov` directory.
 
-Tests use an in-memory SQLite database that is created and destroyed for each test session. This ensures tests don't interfere with your actual database.
+## Test Markers
 
-## Mock Services
+Tests are tagged with markers to allow running specific test categories:
 
-External services like the AI email generation and SMTP email sending are mocked during tests to avoid making actual API calls or sending real emails.
+- `@pytest.mark.auth` - Authentication tests
+- `@pytest.mark.campaigns` - Campaign management tests
+- `@pytest.mark.emails` - Email generation and sending tests
 
-## Test Coverage
+## Writing New Tests
 
-To run tests with coverage reporting:
+When adding new tests, follow these guidelines:
 
-```bash
-pytest --cov=app
-```
+1. Use the Arrange-Act-Assert pattern
+2. Add detailed docstrings explaining the test purpose
+3. Mock external dependencies
+4. Use appropriate test markers
+5. Ensure tests are isolated and don't depend on each other
+6. Keep tests focused on a single functionality
 
-To generate an HTML coverage report:
+### Example test structure:
 
-```bash
-pytest --cov=app --cov-report=html
-```
-
-This will create a `htmlcov` directory with the coverage report, which you can view in a browser. 
+```python
+@pytest.mark.campaigns
+def test_create_campaign(client, token_headers):
+    """
+    Test creating a new campaign.
+    
+    Arrange:
+        - Prepare campaign data
+        - Set up authentication
+    
+    Act:
+        - Send POST request to create campaign
+    
+    Assert:
+        - Verify response status is 201
+        - Verify campaign data in response
+    """
+    # Arrange
+    campaign_data = {...}
+    
+    # Act
+    response = client.post("/api/v1/campaigns", json=campaign_data, headers=token_headers)
+    
+    # Assert
+    assert response.status_code == 201
+    assert response.json()["name"] == campaign_data["name"]
+``` 

@@ -1,232 +1,270 @@
 """
 Tests for authentication endpoints.
 
-This module contains tests for user registration and login functionality.
+This module contains tests for user registration and login endpoints.
 """
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app import crud
-from app.core.security import get_password_hash, verify_password
+from app import models
 
 
-class TestAuthentication:
-    """Tests for authentication-related endpoints."""
+@pytest.mark.auth
+def test_register_user(client: TestClient, db: Session):
+    """
+    Test user registration with valid data.
     
-    def test_register_user(self, client: TestClient, db: Session):
-        """
-        Test user registration.
-        
-        ARRANGE:
-            - Prepare valid user data with strong password
-        
-        ACT:
-            - Send a POST request to the registration endpoint
-        
-        ASSERT:
-            - Verify response status code is 201 (Created)
-            - Verify response contains expected user data
-            - Verify user exists in the database
-        """
-        # Arrange - Prepare test data
-        user_data = {
-            "email": "newuser@example.com",
-            "password": "NewPassword123!",
-            "full_name": "New Test User"
-        }
-        
-        # Act - Send the registration request
-        response = client.post(
-            "/api/v1/auth/register",
-            json=user_data
-        )
-        
-        # Assert - Check the response
-        assert response.status_code == 201, f"Failed to register user: {response.text}"
-        
-        data = response.json()
-        assert data["email"] == user_data["email"]
-        assert data["full_name"] == user_data["full_name"]
-        assert "id" in data
-        
-        # Verify user exists in DB
-        user = crud.user.get_by_email(db, email=user_data["email"])
-        assert user is not None
-        assert user.email == user_data["email"]
-        assert user.is_active is True
+    Arrange:
+        - Prepare valid user registration data
     
-    def test_register_user_weak_password(self, client: TestClient):
-        """
-        Test registration with weak password.
-        
-        ARRANGE:
-            - Prepare user data with a weak password
-        
-        ACT:
-            - Send a POST request to the registration endpoint
-        
-        ASSERT:
-            - Verify response status code is 400 (Bad Request)
-            - Verify response contains password requirement message
-        """
-        # Arrange - Prepare test data with weak password
-        user_data = {
-            "email": "weakpass@example.com",
-            "password": "weak",  # Too weak
-            "full_name": "Weak Password User"
-        }
-        
-        # Act - Send the registration request
-        response = client.post(
-            "/api/v1/auth/register",
-            json=user_data
-        )
-        
-        # Assert - Check for proper rejection
-        assert response.status_code == 400
-        assert "Password does not meet security requirements" in response.json()["detail"]
+    Act:
+        - Send POST request to the registration endpoint
     
-    def test_register_existing_user(self, client: TestClient, create_test_user):
-        """
-        Test registration with existing email.
-        
-        ARRANGE:
-            - Use fixture to create a test user
-            - Prepare registration data with the same email
-        
-        ACT:
-            - Send a POST request to the registration endpoint
-        
-        ASSERT:
-            - Verify response status code is 409 (Conflict)
-            - Verify response contains message about existing user
-        """
-        # Arrange - Prepare data with existing email
-        user_data = {
-            "email": create_test_user["email"],  # Already exists
-            "password": "DifferentPass123!",
-            "full_name": "Duplicate Email User"
-        }
-        
-        # Act - Send the registration request
-        response = client.post(
-            "/api/v1/auth/register",
-            json=user_data
-        )
-        
-        # Assert - Check for conflict response
-        assert response.status_code == 409
-        assert "User with this email already exists" in response.json()["detail"]
+    Assert:
+        - Response status code is 201 Created
+        - Response contains user data with expected email
+        - User exists in the database
+    """
+    # Arrange
+    user_data = {
+        "email": "newuser@example.com",
+        "password": "NewPassword123!",
+        "full_name": "New Test User"
+    }
     
-    def test_login_valid_credentials(self, client: TestClient, create_test_user):
-        """
-        Test login with valid credentials.
-        
-        ARRANGE:
-            - Use fixture to create a test user
-            - Prepare form data with valid credentials
-        
-        ACT:
-            - Send a POST request to the login endpoint
-        
-        ASSERT:
-            - Verify response status code is 200 (OK)
-            - Verify response contains access token
-            - Verify token type is bearer
-        """
-        # Arrange - Prepare login data
-        login_data = {
-            "username": create_test_user["email"],  # OAuth2 uses username field for email
-            "password": create_test_user["password"]
-        }
-        
-        # Act - Send login request
-        response = client.post(
-            "/api/v1/auth/login/access-token",
-            data=login_data  # Use form data for OAuth2
-        )
-        
-        # Assert - Check for successful login
-        assert response.status_code == 200
-        data = response.json()
-        assert "access_token" in data
-        assert data["token_type"] == "bearer"
+    # Act
+    response = client.post("/api/v1/auth/register", json=user_data)
     
-    def test_login_invalid_credentials(self, client: TestClient):
-        """
-        Test login with invalid credentials.
-        
-        ARRANGE:
-            - Prepare form data with invalid credentials
-        
-        ACT:
-            - Send a POST request to the login endpoint
-        
-        ASSERT:
-            - Verify response status code is 401 (Unauthorized)
-            - Verify response contains error message about invalid credentials
-        """
-        # Arrange - Prepare invalid login data
-        login_data = {
-            "username": "nonexistent@example.com",
-            "password": "WrongPassword123!"
-        }
-        
-        # Act - Send login request
-        response = client.post(
-            "/api/v1/auth/login/access-token",
-            data=login_data
-        )
-        
-        # Assert - Check for unauthorized response
-        assert response.status_code == 401
-        assert "Incorrect email or password" in response.json()["detail"]
+    # Assert
+    assert response.status_code == 201
+    data = response.json()
+    assert data["email"] == user_data["email"]
+    assert data["full_name"] == user_data["full_name"]
+    assert "id" in data
     
-    def test_access_protected_endpoint(self, client: TestClient, auth_headers):
-        """
-        Test access to a protected endpoint with valid token.
-        
-        ARRANGE:
-            - Use fixture to get auth headers with valid token
-        
-        ACT:
-            - Send a GET request to a protected endpoint
-        
-        ASSERT:
-            - Verify response status code is 200 (OK)
-            - Verify response contains user data
-        """
-        # Act - Access protected endpoint
-        response = client.get(
-            "/api/v1/users/me",
-            headers=auth_headers
-        )
-        
-        # Assert - Check for successful access
-        assert response.status_code == 200
-        data = response.json()
-        assert "email" in data
-        assert "id" in data
+    # Verify user exists in database
+    user_in_db = db.query(models.User).filter(models.User.email == user_data["email"]).first()
+    assert user_in_db is not None
+    assert user_in_db.email == user_data["email"]
+    assert user_in_db.is_active is True
+    assert user_in_db.is_superuser is False
+
+
+@pytest.mark.auth
+def test_register_user_weak_password(client: TestClient):
+    """
+    Test user registration with a weak password.
     
-    def test_access_protected_endpoint_no_token(self, client: TestClient):
-        """
-        Test access to a protected endpoint without a token.
-        
-        ARRANGE:
-            - No token in request headers
-        
-        ACT:
-            - Send a GET request to a protected endpoint
-        
-        ASSERT:
-            - Verify response status code is 401 (Unauthorized)
-            - Verify response contains error about missing token
-        """
-        # Act - Access protected endpoint without token
-        response = client.get("/api/v1/users/me")
-        
-        # Assert - Check for unauthorized response
-        assert response.status_code == 401
-        assert "Not authenticated" in response.json()["detail"] 
+    Arrange:
+        - Prepare user registration data with a weak password
+    
+    Act:
+        - Send POST request to the registration endpoint
+    
+    Assert:
+        - Response status code is 400 Bad Request
+        - Response contains error message about password requirements
+    """
+    # Arrange
+    user_data = {
+        "email": "weakpass@example.com",
+        "password": "weak",
+        "full_name": "Weak Password User"
+    }
+    
+    # Act
+    response = client.post("/api/v1/auth/register", json=user_data)
+    
+    # Assert
+    assert response.status_code == 400
+    data = response.json()
+    assert "Password does not meet security requirements" in data["detail"]
+
+
+@pytest.mark.auth
+def test_register_existing_user(client: TestClient, test_user: models.User):
+    """
+    Test registration with an existing email.
+    
+    Arrange:
+        - Prepare user registration data with an email that already exists
+    
+    Act:
+        - Send POST request to the registration endpoint
+    
+    Assert:
+        - Response status code is 409 Conflict
+        - Response contains error message about email already existing
+    """
+    # Arrange
+    existing_email = test_user.email
+    user_data = {
+        "email": existing_email,
+        "password": "ValidPass123!",
+        "full_name": "Duplicate Email User"
+    }
+    
+    # Act
+    response = client.post("/api/v1/auth/register", json=user_data)
+    
+    # Assert
+    assert response.status_code == 409
+    data = response.json()
+    assert "already exists" in data["detail"]
+
+
+@pytest.mark.auth
+def test_login_valid_credentials(client: TestClient, test_user: models.User):
+    """
+    Test login with valid credentials.
+    
+    Arrange:
+        - Prepare valid login data
+    
+    Act:
+        - Send POST request to the login endpoint
+    
+    Assert:
+        - Response status code is 200 OK
+        - Response contains access token and token type
+    """
+    # Arrange
+    login_data = {
+        "username": test_user.email,  # OAuth2 form uses username for email
+        "password": "TestPassword123!"
+    }
+    
+    # Act
+    response = client.post("/api/v1/auth/login/access-token", data=login_data)
+    
+    # Assert
+    assert response.status_code == 200
+    data = response.json()
+    assert "access_token" in data
+    assert data["token_type"] == "bearer"
+    
+    # Verify token works on a protected endpoint
+    token = data["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    me_response = client.get("/api/v1/users/me", headers=headers)
+    assert me_response.status_code == 200
+    assert me_response.json()["email"] == test_user.email
+
+
+@pytest.mark.auth
+def test_login_invalid_credentials(client: TestClient, test_user: models.User):
+    """
+    Test login with invalid credentials.
+    
+    Arrange:
+        - Prepare login data with incorrect password
+    
+    Act:
+        - Send POST request to the login endpoint
+    
+    Assert:
+        - Response status code is 401 Unauthorized
+        - Response contains error message about incorrect credentials
+    """
+    # Arrange
+    login_data = {
+        "username": test_user.email,  # OAuth2 form uses username for email
+        "password": "WrongPassword123!"
+    }
+    
+    # Act
+    response = client.post("/api/v1/auth/login/access-token", data=login_data)
+    
+    # Assert
+    assert response.status_code == 401
+    data = response.json()
+    assert "Incorrect email or password" in data["detail"]
+
+
+@pytest.mark.auth
+def test_login_inactive_user(client: TestClient, test_user: models.User, db: Session):
+    """
+    Test login with an inactive user.
+    
+    Arrange:
+        - Deactivate the test user
+        - Prepare login data for the inactive user
+    
+    Act:
+        - Send POST request to the login endpoint
+    
+    Assert:
+        - Response status code is 403 Forbidden
+        - Response contains error message about inactive account
+    """
+    # Arrange - Deactivate user
+    test_user.is_active = False
+    db.commit()
+    
+    login_data = {
+        "username": test_user.email,
+        "password": "TestPassword123!"
+    }
+    
+    # Act
+    response = client.post("/api/v1/auth/login/access-token", data=login_data)
+    
+    # Assert
+    assert response.status_code == 403
+    data = response.json()
+    assert "Inactive user account" in data["detail"]
+    
+    # Restore user to active state for other tests
+    test_user.is_active = True
+    db.commit()
+
+
+@pytest.mark.auth
+def test_access_protected_endpoint(client: TestClient, token_headers: dict):
+    """
+    Test accessing a protected endpoint with a valid token.
+    
+    Arrange:
+        - Use token_headers fixture for authentication
+    
+    Act:
+        - Send GET request to a protected endpoint
+    
+    Assert:
+        - Response status code is 200 OK
+        - Response contains user data
+    """
+    # Act
+    response = client.get("/api/v1/users/me", headers=token_headers)
+    
+    # Assert
+    assert response.status_code == 200
+    data = response.json()
+    assert "email" in data
+    assert "id" in data
+
+
+@pytest.mark.auth
+def test_access_protected_endpoint_no_token(client: TestClient):
+    """
+    Test accessing a protected endpoint without a token.
+    
+    Arrange:
+        - No authentication token
+    
+    Act:
+        - Send GET request to a protected endpoint
+    
+    Assert:
+        - Response status code is 401 Unauthorized
+        - Response contains error message about missing authentication
+    """
+    # Act
+    response = client.get("/api/v1/users/me")
+    
+    # Assert
+    assert response.status_code == 401
+    data = response.json()
+    assert "Not authenticated" in data["detail"] 
