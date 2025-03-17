@@ -6,6 +6,8 @@ ensure consistent test setup.
 """
 
 import os
+import json
+import uuid
 import pytest
 from typing import Dict, Generator, Any, List
 from unittest.mock import Mock, patch
@@ -270,4 +272,107 @@ def mock_smtp_client(monkeypatch):
     monkeypatch.setattr("app.services.email_sender.send_email_async", mock_send_email_async)
     monkeypatch.setattr("app.services.email_sender.send_email", mock_send_email)
     
-    return mock_send_email 
+    return mock_send_email
+
+
+@pytest.fixture
+def mock_current_user() -> models.User:
+    """
+    Mock an authenticated user for testing endpoints that require authentication.
+    
+    Returns:
+        Mock User object
+    """
+    user = Mock(spec=models.User)
+    user.id = uuid.uuid4()
+    user.email = "test@example.com"
+    user.is_active = True
+    user.is_superuser = False
+    
+    return user
+
+
+@pytest.fixture
+def auth_headers(mock_current_user) -> Dict[str, str]:
+    """
+    Generate authentication headers for testing protected endpoints.
+    
+    Args:
+        mock_current_user: Mock user fixture
+        
+    Returns:
+        Dictionary with Authorization header
+    """
+    access_token = security.create_access_token(
+        subject=str(mock_current_user.id)
+    )
+    
+    return {"Authorization": f"Bearer {access_token}"}
+
+
+@pytest.fixture
+def mock_db_session() -> Mock:
+    """
+    Create a mock database session for testing.
+    
+    Returns:
+        Mock database session
+    """
+    mock_session = Mock(spec=Session)
+    return mock_session
+
+
+@pytest.fixture
+def mock_openai_response() -> Mock:
+    """
+    Create a mock OpenAI API response.
+    
+    Returns:
+        Mock OpenAI API response
+    """
+    mock_response = Mock()
+    
+    # Create a mock choice with content
+    mock_choice = Mock()
+    mock_choice.message = Mock()
+    mock_choice.message.content = json.dumps({
+        "subject": "Test Subject",
+        "body_text": "This is a test email body.",
+        "body_html": "<p>This is a test email body.</p>"
+    })
+    
+    mock_response.choices = [mock_choice]
+    
+    return mock_response
+
+
+@pytest.fixture(autouse=True)
+def patch_dependencies(monkeypatch):
+    """
+    Patch common dependencies to avoid external calls during testing.
+    
+    Args:
+        monkeypatch: pytest monkeypatch fixture
+    """
+    # Override get_db dependency to use test database
+    async def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+    
+    monkeypatch.setattr("app.api.deps.get_db", override_get_db)
+    
+    # Override authentication dependency
+    async def override_get_current_user():
+        user = Mock(spec=models.User)
+        user.id = uuid.uuid4()
+        user.email = "test@example.com"
+        user.is_active = True
+        return user
+    
+    monkeypatch.setattr("app.api.deps.get_current_active_user", override_get_current_user)
+    
+    # Patch any external API calls
+    monkeypatch.setattr("app.services.email_sender.send_email", Mock(return_value=True)) 

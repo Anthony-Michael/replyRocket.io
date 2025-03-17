@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """
-Test runner script for ReplyRocket.io.
+Test runner for ReplyRocket.io tests.
 
-This script runs all pytest tests and generates coverage reports.
+This script runs the test suite with coverage reporting and provides a summary of the results.
 """
 
 import os
@@ -13,43 +13,51 @@ from pathlib import Path
 
 
 def run_tests():
-    """Run the pytest tests with coverage reporting."""
-    print("Running tests with coverage...")
+    """Run the test suite with coverage reporting."""
+    print("\n========== Running ReplyRocket.io Tests ==========\n")
     
-    # Create directory for coverage reports if it doesn't exist
-    Path("coverage_reports").mkdir(exist_ok=True)
+    # Get the absolute path to the project root directory
+    root_dir = Path(__file__).parent.absolute()
     
-    # Run pytest with coverage options
-    result = subprocess.run([
+    # Create a directory for coverage reports if it doesn't exist
+    html_cov_dir = root_dir / "htmlcov"
+    if not html_cov_dir.exists():
+        os.makedirs(html_cov_dir)
+    
+    # Build the pytest command with coverage
+    cmd = [
         "pytest",
-        "tests/",
-        "--cov=app",
-        "--cov-report=term-missing",
-        "--cov-report=html:coverage_reports/html",
-        "-v"
-    ], capture_output=True, text=True)
+        "-xvs",  # Show output, verbose, stop on first error
+        "--cov=app",  # Coverage for the app package
+        "--cov-report=term",  # Terminal coverage report
+        "--cov-report=html",  # HTML coverage report
+        "tests/"  # Test directory
+    ]
     
-    # Print the output
-    print(result.stdout)
-    if result.stderr:
-        print("Errors:", file=sys.stderr)
-        print(result.stderr, file=sys.stderr)
-    
-    # Open coverage report in browser if tests pass
-    if result.returncode == 0:
-        print("\nTests passed! Opening coverage report in browser...")
-        report_path = os.path.abspath("coverage_reports/html/index.html")
-        webbrowser.open(f"file://{report_path}")
-    else:
-        print("\nTests failed. Please check the output above for details.")
-    
-    return result.returncode
-
-
-def main():
-    """Main entry point for the script."""
-    sys.exit(run_tests())
+    try:
+        # Run pytest with the specified options
+        result = subprocess.run(cmd, check=False)
+        
+        # Report results
+        if result.returncode == 0:
+            print("\n✅ All tests passed successfully!")
+        else:
+            print(f"\n❌ Tests failed with return code: {result.returncode}")
+        
+        # Open the HTML coverage report in a browser
+        if os.path.exists("htmlcov/index.html"):
+            print("\nOpening coverage report in browser...")
+            try:
+                webbrowser.open("htmlcov/index.html")
+            except webbrowser.Error:
+                print("Could not open browser automatically. Coverage report is available at: htmlcov/index.html")
+        
+        return result.returncode
+        
+    except Exception as e:
+        print(f"\n❌ Error running tests: {str(e)}")
+        return 1
 
 
 if __name__ == "__main__":
-    main() 
+    sys.exit(run_tests()) 
