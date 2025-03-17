@@ -1,18 +1,31 @@
-import secrets
+"""
+Email generation and sending endpoints.
+
+This module handles AI-powered email generation and sending,
+along with email tracking and metrics.
+"""
+
 import logging
-from typing import Any, List, Optional, Dict, Union
+from typing import Any, List, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-from pydantic import ValidationError
 
 from app import crud, models, schemas
 from app.api import deps
-from app.core.config import settings
 from app.services.ai_email_generator import generate_email
-from app.services.email_sender import send_email
-from app.db.session import SessionLocal
+from app.utils.validation import validate_campaign_access
+from app.utils.email_utils import (
+    validate_email_content,
+    validate_email_request,
+    create_email_record,
+    schedule_email_sending,
+    create_email_response,
+    validate_smtp_config
+)
+from app.utils.error_handling import handle_db_error, handle_entity_not_found, handle_permission_error
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -39,33 +52,37 @@ def generate_email_content(
         Generated email content with subject, body text, and HTML
         
     Raises:
-        HTTPException: If campaign doesn't exist or doesn't belong to user
-                      If AI service fails to generate email
+        HTTPException: 
+            - 404 if campaign doesn't exist
+            - 403 if campaign doesn't belong to user
+            - 422 if AI service returns incomplete data
+            - 500 if AI service fails
     """
-    # Check if campaign exists and belongs to user
+    # Validate campaign if one is specified
     if email_request.campaign_id:
-        try:
-            campaign = crud.campaign.get(db, id=email_request.campaign_id)
-            if not campaign:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Campaign not found",
-                )
-            
-            if campaign.user_id != current_user.id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Not enough permissions to access this campaign",
-                )
-        except SQLAlchemyError as e:
-            logger.error(f"Database error when retrieving campaign: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Database error occurred while checking campaign",
-            )
+        validate_campaign_access(db, email_request.campaign_id, current_user.id)
     
-    # Generate email using AI
+    # Generate and validate email content
+    return generate_and_validate_email_content(email_request)
+
+
+def generate_and_validate_email_content(
+    email_request: schemas.EmailGenRequest
+) -> schemas.EmailGenResponse:
+    """
+    Generate email content using AI and validate the response.
+    
+    Args:
+        email_request: Email generation request data
+        
+    Returns:
+        Validated email content
+        
+    Raises:
+        HTTPException: If generation fails or validation fails
+    """
     try:
+        # Generate email using AI service
         email_content = generate_email(
             recipient_name=email_request.recipient_name,
             recipient_company=email_request.recipient_company,
@@ -76,9 +93,7 @@ def generate_email_content(
         )
         
         # Validate the response structure
-        if not all(key in email_content for key in ["subject", "body_text", "body_html"]):
-            logger.error(f"Invalid AI response structure: {email_content}")
-            raise ValueError("AI service returned incomplete data")
+        validate_email_content(email_content)
         
         return email_content
     except ValueError as e:
@@ -118,120 +133,31 @@ def send_email_to_recipient(
         Email record with tracking information
         
     Raises:
-        HTTPException: For various validation and processing errors
+        HTTPException: 
+            - 404 if campaign doesn't exist
+            - 403 if campaign doesn't belong to user
+            - 422 if required fields are missing
+            - 400 if SMTP is not configured
+            - 500 if database error occurs
     """
     # Validate input data
-    if not email_request.subject or not email_request.body_text:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Email subject and body are required",
-        )
+    validate_email_request(email_request)
     
-    # Check if campaign exists and belongs to user
+    # Validate campaign if one is specified
     if email_request.campaign_id:
-        try:
-            campaign = crud.campaign.get(db, id=email_request.campaign_id)
-            if not campaign:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Campaign not found",
-                )
-            
-            if campaign.user_id != current_user.id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Not enough permissions to access this campaign",
-                )
-        except SQLAlchemyError as e:
-            logger.error(f"Database error when retrieving campaign: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Database error occurred while checking campaign",
-            )
+        validate_campaign_access(db, email_request.campaign_id, current_user.id)
     
-    # Check if user has SMTP credentials
-    if not current_user.smtp_host or not current_user.smtp_user or not current_user.smtp_password:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="SMTP credentials not configured. Please set up your email service first.",
-        )
-    
-    # Generate tracking ID
-    tracking_id = secrets.token_urlsafe(16)
+    # Validate SMTP configuration
+    validate_smtp_config(current_user)
     
     # Create email record
-    try:
-        email_obj = crud.email.create_email(
-            db=db, 
-            obj_in=email_request, 
-            campaign_id=email_request.campaign_id,
-            tracking_id=tracking_id
-        )
-    except SQLAlchemyError as e:
-        logger.error(f"Failed to create email record: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create email record in database",
-        )
+    email_obj = create_email_record(db, email_request)
     
-    # Function for background task
-    def send_email_in_background(email_id: str):
-        """Background task for sending email to avoid blocking the main thread"""
-        with SessionLocal() as task_db:
-            try:
-                # Get fresh reference to the email object
-                email = crud.email.get(task_db, id=email_id)
-                if not email:
-                    logger.error(f"Email {email_id} not found for background sending")
-                    return
-                
-                # Send the email
-                send_result = send_email(
-                    recipient_email=email_request.recipient_email,
-                    recipient_name=email_request.recipient_name,
-                    subject=email_request.subject,
-                    body_text=email_request.body_text,
-                    body_html=email_request.body_html,
-                    smtp_config={
-                        "host": current_user.smtp_host,
-                        "port": int(current_user.smtp_port),
-                        "username": current_user.smtp_user,
-                        "password": current_user.smtp_password,
-                        "use_tls": current_user.smtp_use_tls,
-                    },
-                    sender_name=current_user.full_name or current_user.email,
-                    sender_email=current_user.email,
-                    tracking_id=email.tracking_id,
-                )
-                
-                if send_result:
-                    # Mark email as sent
-                    crud.email.mark_as_sent(task_db, email_id=email.id)
-                    
-                    # Update campaign stats if applicable
-                    if email.campaign_id:
-                        campaign = crud.campaign.get(task_db, id=email.campaign_id)
-                        if campaign:
-                            crud.campaign.update_campaign_stats(
-                                task_db,
-                                campaign_id=campaign.id,
-                                stats={"total_emails": campaign.total_emails + 1},
-                            )
-                else:
-                    logger.error(f"Failed to send email {email_id}")
-            except Exception as e:
-                logger.error(f"Error in background email sending: {str(e)}", exc_info=True)
+    # Schedule email sending in the background
+    schedule_email_sending(background_tasks, email_obj, current_user, email_request)
     
-    # Schedule email to be sent in the background
-    background_tasks.add_task(send_email_in_background, str(email_obj.id))
-    
-    # Return immediate response with tracking info
-    return {
-        "id": email_obj.id,
-        "is_sent": False,  # Will be updated by background task
-        "sent_at": None,   # Will be updated by background task
-        "tracking_id": email_obj.tracking_id,
-    }
+    # Return immediate response
+    return create_email_response(email_obj)
 
 
 @router.get("/tracking/{tracking_id}")
@@ -242,20 +168,42 @@ def track_email_open(
 ) -> Any:
     """
     Track email opens via a tracking pixel.
-    """
-    email = crud.email.mark_as_opened(db=db, tracking_id=tracking_id)
     
-    if email and email.campaign_id:
+    Args:
+        db: Database session
+        tracking_id: Unique tracking ID for the email
+        
+    Returns:
+        Tracking pixel image
+    """
+    try:
+        email = crud.email.mark_as_opened(db=db, tracking_id=tracking_id)
+        
+        if email and email.campaign_id:
+            update_campaign_open_stats(db, email)
+        
+        # Return a 1x1 transparent pixel
+        return "Tracking pixel"
+    except SQLAlchemyError as e:
+        handle_db_error(e, "tracking", "email opens")
+
+
+def update_campaign_open_stats(db: Session, email: models.Email) -> None:
+    """
+    Update campaign statistics when an email is opened.
+    
+    Args:
+        db: Database session
+        email: The email that was opened
+    """
+    if not email.is_opened:  # Only update if first open
         campaign = crud.campaign.get(db, id=email.campaign_id)
-        if campaign and not email.is_opened:
+        if campaign:
             crud.campaign.update_campaign_stats(
                 db=db,
                 campaign_id=campaign.id,
                 stats={"opened_emails": campaign.opened_emails + 1},
             )
-    
-    # Return a 1x1 transparent pixel
-    return "Tracking pixel"
 
 
 @router.get("/{email_id}", response_model=schemas.EmailMetrics)
@@ -267,24 +215,50 @@ def get_email_metrics(
 ) -> Any:
     """
     Get metrics for a specific email.
+    
+    Args:
+        db: Database session
+        email_id: ID of the email
+        current_user: Authenticated user making the request
+        
+    Returns:
+        Email metrics data
+        
+    Raises:
+        HTTPException: 
+            - 404 if email not found
+            - 403 if user doesn't have permission
     """
     email = crud.email.get(db, id=email_id)
     if not email:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Email not found",
-        )
+        handle_entity_not_found("email", email_id)
     
     # Check if email belongs to user's campaign
     if email.campaign_id:
-        campaign = crud.campaign.get(db, id=email.campaign_id)
-        if not campaign or campaign.user_id != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not enough permissions",
-            )
+        validate_email_campaign_ownership(db, email, current_user.id)
     
     return email
+
+
+def validate_email_campaign_ownership(
+    db: Session, 
+    email: models.Email, 
+    user_id: UUID
+) -> None:
+    """
+    Validate that an email's campaign belongs to the user.
+    
+    Args:
+        db: Database session
+        email: The email to check
+        user_id: ID of the user
+        
+    Raises:
+        HTTPException: 403 if user doesn't have permission
+    """
+    campaign = crud.campaign.get(db, id=email.campaign_id)
+    if not campaign or campaign.user_id != user_id:
+        handle_permission_error("email", email.id, user_id)
 
 
 @router.get("/campaign/{campaign_id}", response_model=List[schemas.EmailMetrics])
@@ -298,14 +272,26 @@ def get_campaign_emails(
 ) -> Any:
     """
     Get all emails for a campaign.
-    """
-    campaign = crud.campaign.get(db, id=campaign_id)
-    if not campaign or campaign.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Campaign not found",
-        )
     
+    Args:
+        db: Database session
+        campaign_id: ID of the campaign
+        skip: Number of records to skip (for pagination)
+        limit: Maximum number of records to return
+        current_user: Authenticated user making the request
+        
+    Returns:
+        List of email metrics for the campaign
+        
+    Raises:
+        HTTPException: 
+            - 404 if campaign not found
+            - 403 if user doesn't have permission
+    """
+    # Validate campaign access and ownership
+    validate_campaign_access(db, campaign_id, current_user.id)
+    
+    # Get emails for the campaign
     emails = crud.email.get_emails_by_campaign(
         db=db, campaign_id=campaign_id, skip=skip, limit=limit
     )
