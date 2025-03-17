@@ -5,6 +5,42 @@ from uuid import UUID
 from pydantic import BaseModel, EmailStr
 
 
+# Base schema for emails with common fields
+class EmailBase(BaseModel):
+    """Base schema with common email fields"""
+    subject: str
+    body_text: str
+    body_html: str
+    recipient_email: EmailStr
+    recipient_name: Optional[str] = None
+    campaign_id: Optional[UUID] = None
+
+
+# Schema for creating a new email
+class EmailCreate(EmailBase):
+    """Schema used when creating a new email"""
+    pass
+
+
+# Schema for updating an existing email
+class EmailUpdate(EmailBase):
+    """Schema used when updating an existing email"""
+    subject: Optional[str] = None
+    body_text: Optional[str] = None
+    body_html: Optional[str] = None
+    recipient_email: Optional[EmailStr] = None
+
+
+# Complete Email schema with additional fields after creation
+class Email(EmailBase):
+    """Complete email schema with ID and creation timestamp"""
+    id: int  # Primary key field
+    created_at: datetime  # When the email was created
+    
+    class Config:
+        orm_mode = True
+
+
 # Base schema for email generation
 class EmailGenRequest(BaseModel):
     recipient_name: str
