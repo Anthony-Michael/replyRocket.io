@@ -20,6 +20,9 @@ from app.schemas.campaign import Campaign, CampaignCreate, CampaignUpdate
 # Import A/B Testing configuration schema from ab_test_config.py
 from app.schemas.ab_test_config import ABTestConfig  # Import ABTestConfig schema to fix import error
 
+# Import Email Generation Response schema from email_gen_response.py
+from app.schemas.email_gen_response import EmailGenResponse  # Import EmailGenResponse schema to fix import error
+
 # Define __all__ to explicitly specify what is exported from this package
 __all__ = [
     # Token schemas
@@ -43,5 +46,8 @@ __all__ = [
     "CampaignUpdate",
     
     # A/B Testing schemas
-    "ABTestConfig"  # Added ABTestConfig to the exported schemas
+    "ABTestConfig",  # Added ABTestConfig to the exported schemas
+    
+    # Email Generation Response schema
+    "EmailGenResponse"  # Added EmailGenResponse to the exported schemas
 ] 
