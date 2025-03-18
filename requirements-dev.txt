@@ -2,5 +2,15 @@
 pytest==7.4.0
 pytest-cov==4.1.0
 pytest-asyncio==0.21.1
-httpx==0.25.0  # For FastAPI TestClient
-asgi-lifespan==2.1.0  # For managing ASGI app lifespan
+pytest-xdist==3.3.1  # For parallel test execution
+pytest-html==4.1.1   # For HTML test reports
+coverage==7.3.2      # For coverage reporting
+markdown==3.5.1      # For converting markdown to HTML
+black==23.11.0       # Code formatter
+flake8==6.1.0        # Linter
+httpx==0.25.0        # For FastAPI TestClient
+asgi-lifespan==2.1.0 # For managing ASGI app lifespan
+freezegun==1.2.2     # For time-dependent tests
+python-multipart==0.0.6 # For file upload tests
+beautifulsoup4==4.12.2  # For parsing HTML in tests
+pydantic-settings==2.0.3  # For BaseSettings

@@ -11,7 +11,7 @@ from typing import Optional, Union
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.campaign import Campaign
+from app.models.campaign import EmailCampaign
 from app.models.user import User
 from app.models.email import Email
 from app.core.security import validate_password_strength
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 def validate_campaign_access(
     db: Session, campaign_id: int, user_id: int, *, for_update: bool = False
-) -> Campaign:
+) -> EmailCampaign:
     """
     Validate that a campaign exists and the user has access to it.
     
@@ -33,12 +33,12 @@ def validate_campaign_access(
         for_update: If True, check if the campaign is in a state that allows updates
     
     Returns:
-        Campaign: The validated campaign object
+        EmailCampaign: The validated campaign object
         
     Raises:
         HTTPException: 404 if campaign not found, 403 if user doesn't have permission
     """
-    campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+    campaign = db.query(EmailCampaign).filter(EmailCampaign.id == campaign_id).first()
     
     if not campaign:
         logger.warning(f"Campaign with id {campaign_id} not found")
@@ -82,7 +82,7 @@ def validate_email_access(
         raise HTTPException(status_code=404, detail="Email not found")
         
     # Check campaign ownership to determine email access
-    campaign = db.query(Campaign).filter(Campaign.id == email.campaign_id).first()
+    campaign = db.query(EmailCampaign).filter(EmailCampaign.id == email.campaign_id).first()
     
     if not campaign or campaign.user_id != user_id:
         logger.warning(f"User {user_id} attempted to access email {email_id} without permission")

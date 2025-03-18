@@ -13,16 +13,16 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.api import deps
-from app.utils.validation import validate_campaign_access
-from app.utils.campaign_utils import (
-    validate_ab_test_config,
-    configure_campaign_ab_testing,
-    get_user_campaigns,
+from app.services import (
+    create_campaign,
+    get_campaign,
+    get_campaigns,
     get_active_campaigns,
-    create_user_campaign,
-    update_user_campaign,
-    delete_user_campaign
+    update_campaign,
+    delete_campaign,
+    configure_ab_testing
 )
+from app.utils.validation import validate_campaign_access
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -30,75 +30,45 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("", response_model=schemas.Campaign, status_code=status.HTTP_201_CREATED)
-def create_campaign(
+@router.post("/", response_model=schemas.Campaign)
+def create_campaign_endpoint(
     *,
     db: Session = Depends(deps.get_db),
     campaign_in: schemas.CampaignCreate,
-    current_user: models.User = Depends(deps.get_current_active_user),
+    current_user: models.User = Depends(deps.get_current_active_user)
 ) -> Any:
     """
-    Create a new email campaign.
-    
-    Args:
-        db: Database session
-        campaign_in: Campaign creation data with name, description, etc.
-        current_user: Authenticated user making the request
-        
-    Returns:
-        The created campaign object
-        
-    Raises:
-        HTTPException: 500 if database error occurs
+    Create new campaign.
     """
-    return create_user_campaign(db, campaign_in, current_user.id)
+    logger.info(f"Creating new campaign for user {current_user.id}")
+    return create_campaign(db, campaign_in, current_user.id)
 
 
-@router.get("", response_model=List[schemas.Campaign])
+@router.get("/", response_model=List[schemas.Campaign])
 def read_campaigns(
     *,
     db: Session = Depends(deps.get_db),
     skip: int = 0,
     limit: int = 100,
-    current_user: models.User = Depends(deps.get_current_active_user),
+    current_user: models.User = Depends(deps.get_current_active_user)
 ) -> Any:
     """
-    Retrieve all campaigns for the current user.
-    
-    Args:
-        db: Database session
-        skip: Number of records to skip (for pagination)
-        limit: Maximum number of records to return
-        current_user: Authenticated user making the request
-        
-    Returns:
-        List of campaign objects belonging to the user
-        
-    Raises:
-        HTTPException: 500 if database error occurs
+    Retrieve campaigns.
     """
-    return get_user_campaigns(db, current_user.id, skip, limit)
+    logger.info(f"Retrieving campaigns for user {current_user.id}")
+    return get_campaigns(db, current_user.id, skip=skip, limit=limit)
 
 
 @router.get("/active", response_model=List[schemas.Campaign])
 def read_active_campaigns(
     *,
     db: Session = Depends(deps.get_db),
-    current_user: models.User = Depends(deps.get_current_active_user),
+    current_user: models.User = Depends(deps.get_current_active_user)
 ) -> Any:
     """
-    Retrieve all active campaigns for the current user.
-    
-    Args:
-        db: Database session
-        current_user: Authenticated user making the request
-        
-    Returns:
-        List of active campaign objects belonging to the user
-        
-    Raises:
-        HTTPException: 500 if database error occurs
+    Retrieve active campaigns.
     """
+    logger.info(f"Retrieving active campaigns for user {current_user.id}")
     return get_active_campaigns(db, current_user.id)
 
 
@@ -106,125 +76,106 @@ def read_active_campaigns(
 def read_campaign(
     *,
     db: Session = Depends(deps.get_db),
-    campaign_id: int,
-    current_user: models.User = Depends(deps.get_current_active_user),
+    campaign_id: str,
+    current_user: models.User = Depends(deps.get_current_active_user)
 ) -> Any:
     """
-    Get a specific campaign by ID.
-    
-    Args:
-        db: Database session
-        campaign_id: ID of the campaign to retrieve
-        current_user: Authenticated user making the request
-        
-    Returns:
-        The requested campaign object
-        
-    Raises:
-        HTTPException: 
-            - 404 if campaign not found
-            - 403 if user doesn't have permission
+    Get campaign by ID.
     """
-    return validate_campaign_access(db, campaign_id, current_user.id)
+    logger.info(f"Retrieving campaign {campaign_id} for user {current_user.id}")
+    campaign = get_campaign(db, campaign_id)
+    
+    if not campaign:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Campaign not found",
+        )
+        
+    # Validate access
+    validate_campaign_access(campaign, current_user)
+    
+    return campaign
 
 
 @router.put("/{campaign_id}", response_model=schemas.Campaign)
-def update_campaign(
+def update_campaign_endpoint(
     *,
     db: Session = Depends(deps.get_db),
-    campaign_id: int,
+    campaign_id: str,
     campaign_in: schemas.CampaignUpdate,
-    current_user: models.User = Depends(deps.get_current_active_user),
+    current_user: models.User = Depends(deps.get_current_active_user)
 ) -> Any:
     """
     Update a campaign.
-    
-    Args:
-        db: Database session
-        campaign_id: ID of the campaign to update
-        campaign_in: Campaign update data
-        current_user: Authenticated user making the request
-        
-    Returns:
-        The updated campaign object
-        
-    Raises:
-        HTTPException: 
-            - 404 if campaign not found
-            - 403 if user doesn't have permission
-            - 400 if attempting to update an active campaign
     """
-    # Validate access and check if campaign is in a state that allows updates
-    campaign = validate_campaign_access(db, campaign_id, current_user.id, for_update=True)
+    logger.info(f"Updating campaign {campaign_id} for user {current_user.id}")
+    campaign = get_campaign(db, campaign_id)
     
-    # Update the campaign
-    return update_user_campaign(db, campaign, campaign_in)
+    if not campaign:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Campaign not found",
+        )
+        
+    # Validate access
+    validate_campaign_access(campaign, current_user)
+    
+    return update_campaign(db, campaign_id, campaign_in)
 
 
 @router.delete("/{campaign_id}", response_model=schemas.Campaign)
-def delete_campaign(
+def delete_campaign_endpoint(
     *,
     db: Session = Depends(deps.get_db),
-    campaign_id: int,
-    current_user: models.User = Depends(deps.get_current_active_user),
+    campaign_id: str,
+    current_user: models.User = Depends(deps.get_current_active_user)
 ) -> Any:
     """
     Delete a campaign.
-    
-    Args:
-        db: Database session
-        campaign_id: ID of the campaign to delete
-        current_user: Authenticated user making the request
-        
-    Returns:
-        The deleted campaign object
-        
-    Raises:
-        HTTPException: 
-            - 404 if campaign not found
-            - 403 if user doesn't have permission
-            - 500 if database error occurs
     """
-    # Validate access before deletion
-    validate_campaign_access(db, campaign_id, current_user.id)
+    logger.info(f"Deleting campaign {campaign_id} for user {current_user.id}")
+    campaign = get_campaign(db, campaign_id)
     
-    # Perform deletion
-    return delete_user_campaign(db, campaign_id)
+    if not campaign:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Campaign not found",
+        )
+        
+    # Validate access
+    validate_campaign_access(campaign, current_user)
+    
+    return delete_campaign(db, campaign_id)
 
 
-@router.post("/ab-test", response_model=schemas.Campaign)
-def configure_ab_testing(
+@router.post("/{campaign_id}/ab-testing", response_model=schemas.Campaign)
+def configure_ab_testing_endpoint(
     *,
     db: Session = Depends(deps.get_db),
-    ab_test_config: schemas.ABTestConfig,
-    current_user: models.User = Depends(deps.get_current_active_user),
+    campaign_id: str,
+    ab_test_in: schemas.ABTestConfig,
+    current_user: models.User = Depends(deps.get_current_active_user)
 ) -> Any:
     """
     Configure A/B testing for a campaign.
-    
-    Args:
-        db: Database session
-        ab_test_config: A/B test configuration data
-        current_user: Authenticated user making the request
-        
-    Returns:
-        The updated campaign object with A/B testing configuration
-        
-    Raises:
-        HTTPException: 
-            - 404 if campaign not found
-            - 403 if user doesn't have permission
-            - 400 if invalid A/B test configuration
-            - 500 if database error occurs
     """
-    # Validate campaign access
-    validate_campaign_access(db, ab_test_config.campaign_id, current_user.id)
+    logger.info(f"Configuring A/B testing for campaign {campaign_id}")
+    campaign = get_campaign(db, campaign_id)
+    
+    if not campaign:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Campaign not found",
+        )
+        
+    # Validate access
+    validate_campaign_access(campaign, current_user)
     
     # Validate A/B test configuration
-    validate_ab_test_config(ab_test_config)
+    if len(ab_test_in.variants) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A/B testing requires at least two variants",
+        )
     
-    # Configure A/B testing
-    campaign = configure_campaign_ab_testing(db, ab_test_config.campaign_id, ab_test_config)
-    
-    logger.info(f"User {current_user.id} configured A/B testing for campaign {campaign.id}")
-    return campaign 
+    return configure_ab_testing(db, campaign_id, ab_test_in.variants) 

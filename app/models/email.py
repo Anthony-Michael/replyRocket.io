@@ -6,6 +6,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from app.db.session import Base
+from app.models.user import SQLAlchemyUUID
 
 if TYPE_CHECKING:
     from .email_campaign import EmailCampaign  # noqa: F401
@@ -14,8 +15,8 @@ if TYPE_CHECKING:
 class Email(Base):
     __tablename__ = "emails"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    campaign_id = Column(UUID(as_uuid=True), ForeignKey("email_campaigns.id"), nullable=False)
+    id = Column(SQLAlchemyUUID, primary_key=True, default=uuid.uuid4)
+    campaign_id = Column(SQLAlchemyUUID, ForeignKey("email_campaigns.id"), nullable=False)
     
     # Recipient information
     recipient_email = Column(String, nullable=False)
@@ -41,7 +42,7 @@ class Email(Base):
     # Follow-up information
     is_follow_up = Column(Boolean, default=False)
     follow_up_number = Column(Integer, default=0)  # 0 = initial email, 1 = first follow-up, etc.
-    original_email_id = Column(UUID(as_uuid=True), ForeignKey("emails.id"), nullable=True)
+    original_email_id = Column(SQLAlchemyUUID, ForeignKey("emails.id"), nullable=True)
     
     # A/B testing
     ab_test_variant = Column(String, nullable=True)
@@ -55,6 +56,10 @@ class Email(Base):
     
     # Relationships
     campaign = relationship("EmailCampaign", back_populates="emails")
-    follow_ups = relationship("Email", 
-                             foreign_keys=[original_email_id],
-                             backref="original_email") 
+    
+    # Self-referential relationship for follow-ups
+    # original_email is the parent email that this follow-up refers to
+    original_email = relationship("Email", 
+                                 remote_side=[id],  # The remote side is the id column of the parent email
+                                 foreign_keys=[original_email_id],
+                                 backref="follow_ups") 

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.crud.base import CRUDBase
 from app.models.email import Email
 from app.schemas.email import EmailSendRequest
+from app.models.campaign import EmailCampaign
 
 
 class CRUDEmail(CRUDBase[Email, EmailSendRequest, Any]):
@@ -98,8 +99,6 @@ class CRUDEmail(CRUDBase[Email, EmailSendRequest, Any]):
         """
         Get all emails that need follow-ups.
         """
-        from app.models.email_campaign import EmailCampaign
-        
         # Emails that are sent but not replied, and their campaign allows follow-ups
         return (
             db.query(Email)

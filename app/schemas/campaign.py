@@ -35,7 +35,7 @@ class CampaignUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
-# Campaign in DB
+# Campaign in DB base class
 class CampaignInDBBase(CampaignBase):
     id: UUID
     user_id: UUID
@@ -53,6 +53,14 @@ class CampaignInDBBase(CampaignBase):
 
 # Campaign for API response
 class Campaign(CampaignInDBBase):
+    pass
+
+
+# Campaign in DB (full schema)
+class CampaignInDB(CampaignInDBBase):
+    """Complete campaign schema with all database fields"""
+    # This class provides a way to distinguish between API response and DB model
+    # It can be extended later with internal fields not exposed to API
     pass
 
 

@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app import crud, models, schemas
 from app.db.session import SessionLocal
-from app.services.email_sender import send_email
+from app.services.email_sender_service import send_email
 from app.utils.error_handling import handle_db_error
 
 # Set up logger
@@ -166,10 +166,12 @@ def send_email_in_background(
         sender_name: Name of the sender
         sender_email: Email of the sender
     """
-    with SessionLocal() as task_db:
-        try:
+    db = None
+    try:
+        # Create a new session using context manager to ensure proper cleanup
+        with SessionLocal() as db:
             # Get fresh reference to the email object
-            email = crud.email.get(task_db, id=email_id)
+            email = crud.email.get(db, id=email_id)
             if not email:
                 logger.error(f"Email {email_id} not found for background sending")
                 return
@@ -188,9 +190,13 @@ def send_email_in_background(
             )
             
             # Update email and campaign records
-            update_records_after_sending(task_db, email, send_result)
-        except Exception as e:
-            logger.error(f"Error in background email sending: {str(e)}", exc_info=True)
+            update_records_after_sending(db, email, send_result)
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in background email sending: {str(e)}", exc_info=True)
+        # No need to close the session as the context manager handles it
+    except Exception as e:
+        logger.error(f"Error in background email sending: {str(e)}", exc_info=True)
+        # No need to close the session as the context manager handles it
 
 
 def update_records_after_sending(

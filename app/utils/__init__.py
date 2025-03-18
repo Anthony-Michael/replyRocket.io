@@ -20,7 +20,7 @@ from app.utils.error_handling import (
     create_error_response
 )
 
-from app.utils.auth_utils import (
+from app.utils.auth import (
     authenticate_user,
     generate_access_token,
     create_token_response,
@@ -30,7 +30,7 @@ from app.utils.auth_utils import (
     create_user
 )
 
-from app.utils.email_utils import (
+from app.utils.email import (
     validate_email_content,
     validate_email_request,
     create_email_record,
@@ -42,7 +42,7 @@ from app.utils.email_utils import (
     validate_smtp_config
 )
 
-from app.utils.campaign_utils import (
+from app.utils.campaign import (
     validate_ab_test_config,
     configure_campaign_ab_testing,
     get_user_campaigns,

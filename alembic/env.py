@@ -7,7 +7,7 @@ from sqlalchemy import engine_from_config, pool
 from app.core.config import settings
 from app.db.session import Base
 from app.models.user import User
-from app.models.email_campaign import EmailCampaign
+from app.models.campaign import EmailCampaign
 from app.models.email import Email
 
 # this is the Alembic Config object, which provides

@@ -6,10 +6,24 @@ This enables imports like 'from app.schemas import Token' to work properly.
 """
 
 # Import Token schema from token.py
-from app.schemas.token import Token, TokenPayload
+from app.schemas.token import (
+    Token,
+    TokenPayload, 
+    TokenRefresh, 
+    CookieTokenResponse,
+    AccessToken,
+    RefreshTokenCreate,
+    RefreshTokenDB,
+)
 
 # Import User schemas from user.py
-from app.schemas.user import User, UserCreate, UserInDB, UserUpdate, SMTPConfig
+from app.schemas.user import (
+    User, 
+    UserCreate, 
+    UserUpdate, 
+    UserInDB,
+    SMTPConfig,
+)
 
 # Import Email schemas from email.py
 from app.schemas.email import (
@@ -22,20 +36,32 @@ from app.schemas.email import (
     EmailSendRequest, 
     EmailSendResponse, 
     EmailMetrics,
-    FollowUpRequest
+    FollowUpRequest,
+    EmailInDB,
 )
 
 # Import Campaign schemas from campaign.py
-from app.schemas.campaign import Campaign, CampaignCreate, CampaignStats, CampaignUpdate
+from app.schemas.campaign import (
+    Campaign, 
+    CampaignCreate, 
+    CampaignUpdate, 
+    CampaignInDB,
+    CampaignStats,
+)
 
-# Import A/B Testing configuration schema from ab_test_config.py
-from app.schemas.ab_test_config import ABTestConfig
+# Import A/B Testing configuration schema from ab_test.py
+from app.schemas.ab_test import ABTestConfig
 
 # Define __all__ to explicitly specify what is exported from this package
 __all__ = [
     # Token schemas
     "Token",
     "TokenPayload",
+    "TokenRefresh",
+    "CookieTokenResponse",
+    "AccessToken",
+    "RefreshTokenCreate",
+    "RefreshTokenDB",
     
     # User schemas
     "User",
@@ -55,11 +81,13 @@ __all__ = [
     "EmailSendResponse",
     "EmailMetrics",
     "FollowUpRequest",
+    "EmailInDB",
     
     # Campaign schemas
     "Campaign",
     "CampaignCreate",
     "CampaignUpdate",
+    "CampaignInDB",
     "CampaignStats",
     
     # A/B Testing schemas

@@ -4,7 +4,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.crud.base import CRUDBase
-from app.models.email_campaign import EmailCampaign
+from app.models.campaign import EmailCampaign
 from app.schemas.campaign import CampaignCreate, CampaignUpdate
 
 

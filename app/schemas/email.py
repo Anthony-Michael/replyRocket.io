@@ -41,6 +41,24 @@ class Email(EmailBase):
         orm_mode = True
 
 
+# Database schema for Email model with all fields
+class EmailInDB(Email):
+    """Full email schema including database fields"""
+    id: UUID
+    is_sent: bool = False
+    is_opened: bool = False
+    is_replied: bool = False
+    is_converted: bool = False
+    num_opens: int = 0
+    sent_at: Optional[datetime] = None
+    opened_at: Optional[datetime] = None
+    replied_at: Optional[datetime] = None
+    converted_at: Optional[datetime] = None
+    
+    class Config:
+        orm_mode = True
+
+
 # Base schema for email generation
 class EmailGenRequest(BaseModel):
     recipient_name: str

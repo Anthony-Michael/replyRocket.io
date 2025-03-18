@@ -11,6 +11,7 @@ import uuid
 import pytest
 from typing import Dict, Generator, Any, List
 from unittest.mock import Mock, patch
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -95,7 +96,7 @@ def test_user(db: Session) -> models.User:
     """
     user_in = schemas.UserCreate(
         email="testuser@example.com",
-        password="TestPassword123!",
+        password="password",  # Simplified for testing
         full_name="Test User"
     )
     
@@ -138,7 +139,7 @@ def test_superuser(db: Session) -> models.User:
 
 
 @pytest.fixture(scope="function")
-def test_campaign(db: Session, test_user: models.User) -> models.Campaign:
+def test_campaign(db: Session, test_user: models.User) -> models.EmailCampaign:
     """
     Create a test campaign for the test user.
     
@@ -189,6 +190,99 @@ def superuser_token_headers(test_superuser: models.User) -> Dict[str, str]:
     """
     token = security.create_access_token(test_superuser.id)
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture(scope="function")
+def test_refresh_token(db: Session, test_user: models.User) -> models.RefreshToken:
+    """
+    Create a test refresh token for the test user.
+    
+    Args:
+        db: The database session fixture
+        test_user: The test user fixture
+        
+    Returns:
+        A RefreshToken model instance for testing
+    """
+    # Create a refresh token that expires in 7 days
+    token = security.generate_refresh_token()
+    expires_at = datetime.utcnow() + timedelta(days=7)
+    
+    refresh_token = models.RefreshToken(
+        token=token,
+        user_id=test_user.id,
+        expires_at=expires_at,
+        revoked=False,
+        created_at=datetime.utcnow()
+    )
+    
+    db.add(refresh_token)
+    db.commit()
+    db.refresh(refresh_token)
+    
+    return refresh_token
+
+
+@pytest.fixture(scope="function")
+def revoked_refresh_token(db: Session, test_user: models.User) -> models.RefreshToken:
+    """
+    Create a revoked refresh token for the test user.
+    
+    Args:
+        db: The database session fixture
+        test_user: The test user fixture
+        
+    Returns:
+        A revoked RefreshToken model instance for testing
+    """
+    # Create a refresh token that expires in 7 days but is revoked
+    token = security.generate_refresh_token()
+    expires_at = datetime.utcnow() + timedelta(days=7)
+    
+    refresh_token = models.RefreshToken(
+        token=token,
+        user_id=test_user.id,
+        expires_at=expires_at,
+        revoked=True,
+        created_at=datetime.utcnow()
+    )
+    
+    db.add(refresh_token)
+    db.commit()
+    db.refresh(refresh_token)
+    
+    return refresh_token
+
+
+@pytest.fixture(scope="function")
+def expired_refresh_token(db: Session, test_user: models.User) -> models.RefreshToken:
+    """
+    Create an expired refresh token for the test user.
+    
+    Args:
+        db: The database session fixture
+        test_user: The test user fixture
+        
+    Returns:
+        An expired RefreshToken model instance for testing
+    """
+    # Create a refresh token that expired 1 day ago
+    token = security.generate_refresh_token()
+    expires_at = datetime.utcnow() - timedelta(days=1)
+    
+    refresh_token = models.RefreshToken(
+        token=token,
+        user_id=test_user.id,
+        expires_at=expires_at,
+        revoked=False,
+        created_at=datetime.utcnow() - timedelta(days=8)
+    )
+    
+    db.add(refresh_token)
+    db.commit()
+    db.refresh(refresh_token)
+    
+    return refresh_token
 
 
 # Mocks for external services
@@ -375,4 +469,4 @@ def patch_dependencies(monkeypatch):
     monkeypatch.setattr("app.api.deps.get_current_active_user", override_get_current_user)
     
     # Patch any external API calls
-    monkeypatch.setattr("app.services.email_sender.send_email", Mock(return_value=True)) 
+    monkeypatch.setattr("app.services.email_sender_service.send_email", Mock(return_value=True)) 

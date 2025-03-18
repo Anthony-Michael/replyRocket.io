@@ -6,10 +6,18 @@ error responses across the application.
 """
 
 import logging
+import traceback
 from typing import Any, Dict, Optional
 
-from fastapi import HTTPException, status
-from sqlalchemy.exc import SQLAlchemyError, IntegrityError
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError, OperationalError, TimeoutError, ResourceClosedError
+
+from app.core.exception_handlers import (
+    DatabaseError,
+    EntityNotFoundError,
+    PermissionDeniedError,
+    ResourceConflictError,
+    InvalidInputError
+)
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -31,42 +39,63 @@ def handle_db_error(
         detail: Optional custom error message
         
     Raises:
-        HTTPException: With appropriate status code and detail message
+        DatabaseError: With appropriate error details
+        ResourceConflictError: For unique constraint violations
+        InvalidInputError: For foreign key violations
     """
     error_msg = detail or f"Database error occurred while {operation} {entity}"
     
-    if isinstance(error, IntegrityError):
+    # Get the stack trace for better debugging
+    stack_trace = traceback.format_exc()
+    
+    # Check for specific connection or session-related errors
+    if isinstance(error, (OperationalError, TimeoutError, ResourceClosedError)):
+        # These errors often indicate connection issues or session misuse
+        logger.error(
+            f"Database connection error during {operation} {entity}: {str(error)}\n"
+            f"This may indicate a potential session leak or connection issue.\n"
+            f"Stack trace: {stack_trace}"
+        )
+    elif isinstance(error, IntegrityError):
         # Handle constraint violations
         err_str = str(error).lower()
         if "unique constraint" in err_str or "duplicate key" in err_str:
             if "email" in err_str:
                 # Handle duplicate email case
                 logger.warning(f"Duplicate email error: {str(error)}")
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"{entity.capitalize()} with this email already exists"
+                raise ResourceConflictError(
+                    message=f"{entity.capitalize()} with this email already exists",
+                    entity=entity,
+                    field="email"
                 )
             else:
                 # Generic unique constraint
                 logger.warning(f"Unique constraint error: {str(error)}")
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"{entity.capitalize()} already exists"
+                raise ResourceConflictError(
+                    message=f"{entity.capitalize()} already exists",
+                    entity=entity
                 )
         
         # Foreign key violations
         if "foreign key constraint" in err_str:
             logger.warning(f"Foreign key error: {str(error)}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Referenced entity does not exist"
+            raise InvalidInputError(
+                message="Referenced entity does not exist",
+                details={"error": str(error)}
             )
+    else:
+        # Generic database error
+        logger.error(
+            f"Database error during {operation} {entity}: {str(error)}\n"
+            f"Stack trace: {stack_trace}"
+        )
     
-    # Generic database error
-    logger.error(f"Database error during {operation} {entity}: {str(error)}")
-    raise HTTPException(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail=error_msg
+    # Raise the appropriate exception
+    raise DatabaseError(
+        message=error_msg,
+        operation=operation,
+        entity=entity,
+        original_error=error
     )
 
 
@@ -84,16 +113,17 @@ def handle_entity_not_found(
         user_info: Optional additional user information for logging
         
     Raises:
-        HTTPException: 404 Not Found with appropriate detail message
+        EntityNotFoundError: With appropriate error details
     """
     log_msg = f"{entity.capitalize()} with id {entity_id} not found"
     if user_info:
         log_msg += f" (requested by {user_info})"
     
     logger.warning(log_msg)
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"{entity.capitalize()} not found"
+    raise EntityNotFoundError(
+        entity=entity,
+        entity_id=entity_id,
+        details={"user_info": user_info} if user_info else None
     )
 
 
@@ -111,14 +141,15 @@ def handle_permission_error(
         user_id: The ID of the user attempting the access
         
     Raises:
-        HTTPException: 403 Forbidden with appropriate detail message
+        PermissionDeniedError: With appropriate error details
     """
     logger.warning(
         f"User {user_id} attempted to access {entity} {entity_id} without permission"
     )
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Not enough permissions"
+    raise PermissionDeniedError(
+        entity=entity,
+        entity_id=entity_id,
+        user_id=user_id
     )
 
 
@@ -145,6 +176,6 @@ def create_error_response(
     }
     
     if error_type:
-        response["error_type"] = error_type
+        response["error_code"] = error_type
         
     return response 

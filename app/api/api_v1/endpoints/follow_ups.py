@@ -6,8 +6,8 @@ from sqlalchemy.orm import Session
 
 from app import crud, models, schemas
 from app.api import deps
-from app.services.ai_email_generator import generate_follow_up
-from app.services.email_sender import send_email
+from app.services.ai_email_generator_service import generate_follow_up
+from app.services.email_sender_service import send_email
 
 router = APIRouter()
 

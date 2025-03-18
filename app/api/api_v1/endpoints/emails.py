@@ -15,16 +15,9 @@ from sqlalchemy.orm import Session
 
 from app import crud, models, schemas
 from app.api import deps
-from app.services.ai_email_generator import generate_email
-from app.utils.validation import validate_campaign_access
-from app.utils.email_utils import (
-    validate_email_content,
-    validate_email_request,
-    create_email_record,
-    schedule_email_sending,
-    create_email_response,
-    validate_smtp_config
-)
+from app.services import email_service, campaign_service
+from app.services.ai_email_generator_service import generate_email
+from app.utils.validation import validate_campaign_access, validate_email_access
 from app.utils.error_handling import handle_db_error, handle_entity_not_found, handle_permission_error
 
 # Set up logger
@@ -52,11 +45,9 @@ def generate_email_content(
         Generated email content with subject, body text, and HTML
         
     Raises:
-        HTTPException: 
-            - 404 if campaign doesn't exist
-            - 403 if campaign doesn't belong to user
-            - 422 if AI service returns incomplete data
-            - 500 if AI service fails
+        HTTPException: 404 if campaign not found, 403 if not owned by user,
+                      422 if AI service returns incomplete data,
+                      500 if AI service fails
     """
     # Validate campaign if one is specified
     if email_request.campaign_id:
@@ -92,72 +83,80 @@ def generate_and_validate_email_content(
             personalization_notes=email_request.personalization_notes,
         )
         
-        # Validate the response structure
-        validate_email_content(email_content)
-        
         return email_content
     except ValueError as e:
         # Handle validation or data structure errors
-        logger.error(f"Value error in email generation: {str(e)}")
+        logger.error(f"Validation error in email generation: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Email generation error: {str(e)}",
+            detail=str(e),
         )
     except Exception as e:
-        # Log the full exception for debugging
-        logger.error(f"Email generation failed: {str(e)}", exc_info=True)
+        # Handle other exceptions from the AI service
+        logger.error(f"Error generating email: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to generate email. Please try again later.",
+            detail="Error generating email content",
         )
 
 
-@router.post("/send", response_model=schemas.EmailSendResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/send", response_model=schemas.Email, status_code=status.HTTP_201_CREATED)
 def send_email_to_recipient(
     *,
     db: Session = Depends(deps.get_db),
     email_request: schemas.EmailSendRequest,
-    current_user: models.User = Depends(deps.get_current_active_user),
     background_tasks: BackgroundTasks,
+    current_user: models.User = Depends(deps.get_current_active_user),
 ) -> Any:
     """
     Send an email to a recipient.
     
     Args:
         db: Database session
-        email_request: Email send request with recipient and content details
+        email_request: Email send request with recipient and content
+        background_tasks: FastAPI background tasks
         current_user: Authenticated user making the request
-        background_tasks: FastAPI background tasks for async processing
         
     Returns:
-        Email record with tracking information
+        Created email record
         
     Raises:
-        HTTPException: 
-            - 404 if campaign doesn't exist
-            - 403 if campaign doesn't belong to user
-            - 422 if required fields are missing
-            - 400 if SMTP is not configured
-            - 500 if database error occurs
+        HTTPException: 404 if campaign not found, 403 if not owned by user,
+                      400 if SMTP configuration is missing
     """
-    # Validate input data
-    validate_email_request(email_request)
-    
-    # Validate campaign if one is specified
-    if email_request.campaign_id:
-        validate_campaign_access(db, email_request.campaign_id, current_user.id)
-    
-    # Validate SMTP configuration
-    validate_smtp_config(current_user)
-    
-    # Create email record
-    email_obj = create_email_record(db, email_request)
-    
-    # Schedule email sending in the background
-    schedule_email_sending(background_tasks, email_obj, current_user, email_request)
-    
-    # Return immediate response
-    return create_email_response(email_obj)
+    try:
+        # Validate SMTP configuration
+        email_service.validate_smtp_config(current_user)
+        
+        # Validate campaign access if a campaign ID is provided
+        if email_request.campaign_id:
+            validate_campaign_access(db, email_request.campaign_id, current_user.id)
+            
+        # Create email record
+        email = email_service.create_email(db, email_request, email_request.campaign_id)
+        
+        # Schedule email sending as a background task
+        email_service.schedule_email_send(
+            background_tasks=background_tasks,
+            email=email,
+            user=current_user,
+            email_request=email_request
+        )
+        
+        logger.info(f"Email {email.id} scheduled for sending to {email_request.recipient_email}")
+        
+        # Return the email record (not waiting for actual sending)
+        return email
+    except SQLAlchemyError as e:
+        handle_db_error(e, "Error creating email record")
+    except Exception as e:
+        if not isinstance(e, HTTPException):
+            logger.error(f"Unexpected error sending email: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="An unexpected error occurred while sending the email",
+            )
+        raise
 
 
 @router.get("/tracking/{tracking_id}")
@@ -177,7 +176,7 @@ def track_email_open(
         Tracking pixel image
     """
     try:
-        email = crud.email.mark_as_opened(db=db, tracking_id=tracking_id)
+        email = email_service.track_email_open(db, tracking_id)
         
         if email and email.campaign_id:
             update_campaign_open_stats(db, email)
@@ -185,7 +184,7 @@ def track_email_open(
         # Return a 1x1 transparent pixel
         return "Tracking pixel"
     except SQLAlchemyError as e:
-        handle_db_error(e, "tracking", "email opens")
+        handle_db_error(e, "Error tracking email opens")
 
 
 def update_campaign_open_stats(db: Session, email: models.Email) -> None:
@@ -199,7 +198,7 @@ def update_campaign_open_stats(db: Session, email: models.Email) -> None:
     if not email.is_opened:  # Only update if first open
         campaign = crud.campaign.get(db, id=email.campaign_id)
         if campaign:
-            crud.campaign.update_campaign_stats(
+            campaign_service.update_campaign_statistics(
                 db=db,
                 campaign_id=campaign.id,
                 stats={"opened_emails": campaign.opened_emails + 1},

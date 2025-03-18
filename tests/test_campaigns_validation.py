@@ -3,7 +3,7 @@ import pytest
 from fastapi import status
 from unittest.mock import Mock, patch, MagicMock
 
-from app.models.email_campaign import EmailCampaign
+from app.models.campaign import EmailCampaign
 
 
 # Test API endpoint that uses validate_campaign_access
