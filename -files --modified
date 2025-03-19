@@ -1,0 +1,297 @@
+[1mdiff --git a/app/api/api_v1/endpoints/health.py b/app/api/api_v1/endpoints/health.py[m
+[1mindex 6bd8fbe..0f7431c 100644[m
+[1m--- a/app/api/api_v1/endpoints/health.py[m
+[1m+++ b/app/api/api_v1/endpoints/health.py[m
+[36m@@ -9,6 +9,7 @@[m [mimport time[m
+ [m
+ from fastapi import APIRouter, Depends, status[m
+ from sqlalchemy.orm import Session[m
+[32m+[m[32mfrom sqlalchemy import text[m
+ [m
+ from app.core.config import settings[m
+ from app.db.session import get_db, get_pool_status[m
+[36m@@ -34,7 +35,7 @@[m [mdef health_check(db: Session = Depends(get_db)) -> Dict[str, Any]:[m
+     start_time = time.time()[m
+     try:[m
+         # Execute a simple query to check DB connection[m
+[31m-        db.execute("SELECT 1").fetchall()[m
+[32m+[m[32m        db.execute(text("SELECT 1")).fetchall()[m
+         db_status = "healthy"[m
+         db_response_time = time.time() - start_time[m
+     except Exception as e:[m
+[36m@@ -73,7 +74,7 @@[m [mdef db_health_check(db: Session = Depends(get_db)) -> Dict[str, Any]:[m
+     start_time = time.time()[m
+     try:[m
+         # Execute a simple query to check DB connection[m
+[31m-        result = db.execute("SELECT 1").fetchall()[m
+[32m+[m[32m        result = db.execute(text("SELECT 1")).fetchall()[m
+         db_status = "healthy"[m
+         db_response_time = time.time() - start_time[m
+     except Exception as e:[m
+[1mdiff --git a/app/core/config.py b/app/core/config.py[m
+[1mindex 7667e38..173217e 100644[m
+[1m--- a/app/core/config.py[m
+[1m+++ b/app/core/config.py[m
+[36m@@ -57,6 +57,21 @@[m [mclass BaseAppSettings(BaseSettings):[m
+     LOG_LEVEL: LogLevel = LogLevel.INFO[m
+     LOG_FORMAT: LogFormat = LogFormat.TEXT[m
+     [m
+[32m+[m[32m    # Security[m
+[32m+[m[32m    SECURE_COOKIES: bool = False[m
+[32m+[m[41m    [m
+[32m+[m[32m    @validator("ENVIRONMENT", pre=True)[m
+[32m+[m[32m    def validate_environment(cls, v: Any) -> EnvironmentType:[m
+[32m+[m[32m        if isinstance(v, str):[m
+[32m+[m[32m            # Strip comments and whitespace[m
+[32m+[m[32m            v = v.split("#")[0].strip().lower()[m
+[32m+[m[32m            try:[m
+[32m+[m[32m                return EnvironmentType(v)[m
+[32m+[m[32m            except ValueError:[m
+[32m+[m[32m                logging.warning(f"Invalid environment value: '{v}'. Falling back to development.")[m
+[32m+[m[32m                return EnvironmentType.DEVELOPMENT[m
+[32m+[m[32m        return v[m
+[32m+[m[41m    [m
+     @validator("IS_DEVELOPMENT", "IS_STAGING", "IS_PRODUCTION", "IS_TEST", pre=True, always=True)[m
+     def set_environment_flags(cls, v: bool, values: Dict[str, Any]) -> bool:[m
+         if "ENVIRONMENT" not in values:[m
+[36m@@ -66,6 +81,42 @@[m [mclass BaseAppSettings(BaseSettings):[m
+             return True[m
+         return cls._check_environment_match(env, v)[m
+     [m
+[32m+[m[32m    @validator("LOG_LEVEL", pre=True)[m
+[32m+[m[32m    def validate_log_level(cls, v: Any) -> LogLevel:[m
+[32m+[m[32m        if isinstance(v, str):[m
+[32m+[m[32m            # Strip comments and whitespace[m
+[32m+[m[32m            v = v.split("#")[0].strip().upper()[m
+[32m+[m[32m            try:[m
+[32m+[m[32m                return LogLevel(v)[m
+[32m+[m[32m            except ValueError:[m
+[32m+[m[32m                logging.warning(f"Invalid log level value: '{v}'. Falling back to INFO.")[m
+[32m+[m[32m                return LogLevel.INFO[m
+[32m+[m[32m        return v[m
+[32m+[m[41m    [m
+[32m+[m[32m    @validator("LOG_FORMAT", pre=True)[m
+[32m+[m[32m    def validate_log_format(cls, v: Any) -> LogFormat:[m
+[32m+[m[32m        if isinstance(v, str):[m
+[32m+[m[32m            # Strip comments and whitespace[m
+[32m+[m[32m            v = v.split("#")[0].strip().lower()[m
+[32m+[m[32m            try:[m
+[32m+[m[32m                return LogFormat(v)[m
+[32m+[m[32m            except ValueError:[m
+[32m+[m[32m                logging.warning(f"Invalid log format value: '{v}'. Falling back to TEXT.")[m
+[32m+[m[32m                return LogFormat.TEXT[m
+[32m+[m[32m        return v[m
+[32m+[m[41m    [m
+[32m+[m[32m    @validator("SECURE_COOKIES", pre=True)[m
+[32m+[m[32m    def validate_secure_cookies(cls, v: Any) -> bool:[m
+[32m+[m[32m        if isinstance(v, str):[m
+[32m+[m[32m            # Strip comments and whitespace[m
+[32m+[m[32m            v = v.split("#")[0].strip().lower()[m
+[32m+[m[32m            if v in ("true", "yes", "1", "t", "y"):[m
+[32m+[m[32m                return True[m
+[32m+[m[32m            if v in ("false", "no", "0", "f", "n"):[m
+[32m+[m[32m                return False[m
+[32m+[m[32m            logging.warning(f"Invalid secure cookies value: '{v}'. Falling back to False.")[m
+[32m+[m[32m        return False[m
+[32m+[m[41m    [m
+     @classmethod[m
+     def _check_environment_match(cls, env: EnvironmentType, flag_value: bool) -> bool:[m
+         field_name = f"IS_{env.upper()}"[m
+[36m@@ -98,10 +149,14 @@[m [mclass DevelopmentSettings(BaseAppSettings):[m
+     [m
+     # Database settings[m
+     POSTGRES_SERVER: str = "localhost"[m
+[32m+[m[32m    POSTGRES_PORT: int = 5432  # Default PostgreSQL port[m
+     POSTGRES_USER: str = "postgres"[m
+     POSTGRES_PASSWORD: str = "postgres"[m
+     POSTGRES_DB: str = "replyrocket_dev"[m
+[31m-    SQLALCHEMY_DATABASE_URI: Optional[PostgresDsn] = None[m
+[32m+[m[41m    [m
+[32m+[m[32m    # AI Service settings[m
+[32m+[m[32m    OPENAI_API_KEY: str = Field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))[m
+[32m+[m[32m    AI_MODEL: str = "gpt-3.5-turbo"[m
+     [m
+     # Database pool settings for development (smaller pool)[m
+     DB_POOL_SIZE: int = 2[m
+[36m@@ -111,6 +166,11 @@[m [mclass DevelopmentSettings(BaseAppSettings):[m
+     [m
+     # Logging[m
+     LOG_LEVEL: LogLevel = LogLevel.DEBUG[m
+[32m+[m[41m    [m
+[32m+[m[32m    @property[m
+[32m+[m[32m    def SQLALCHEMY_DATABASE_URI(self) -> str:[m
+[32m+[m[32m        """Build database URI from component parts."""[m
+[32m+[m[32m        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"[m
+ [m
+ [m
+ class StagingSettings(BaseAppSettings):[m
+[36m@@ -131,16 +191,21 @@[m [mclass StagingSettings(BaseAppSettings):[m
+     [m
+     # Database settings[m
+     POSTGRES_SERVER: str = Field(..., env="POSTGRES_SERVER")[m
+[32m+[m[32m    POSTGRES_PORT: int = Field(5432, env="POSTGRES_PORT")[m
+     POSTGRES_USER: str = Field(..., env="POSTGRES_USER")[m
+     POSTGRES_PASSWORD: str = Field(..., env="POSTGRES_PASSWORD")[m
+     POSTGRES_DB: str = Field(..., env="POSTGRES_DB")[m
+[31m-    SQLALCHEMY_DATABASE_URI: Optional[PostgresDsn] = None[m
+     [m
+     # Database pool settings [m
+     DB_POOL_SIZE: int = 5[m
+     DB_MAX_OVERFLOW: int = 10[m
+     DB_POOL_TIMEOUT: int = 30[m
+     DB_POOL_RECYCLE: int = 1800[m
+[32m+[m[41m    [m
+[32m+[m[32m    @property[m
+[32m+[m[32m    def SQLALCHEMY_DATABASE_URI(self) -> str:[m
+[32m+[m[32m        """Build database URI from component parts."""[m
+[32m+[m[32m        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"[m
+ [m
+ [m
+ class ProductionSettings(BaseAppSettings):[m
+[36m@@ -161,10 +226,10 @@[m [mclass ProductionSettings(BaseAppSettings):[m
+     [m
+     # Database settings[m
+     POSTGRES_SERVER: str = Field(..., env="POSTGRES_SERVER")[m
+[32m+[m[32m    POSTGRES_PORT: int = Field(5432, env="POSTGRES_PORT")[m
+     POSTGRES_USER: str = Field(..., env="POSTGRES_USER")[m
+     POSTGRES_PASSWORD: str = Field(..., env="POSTGRES_PASSWORD")[m
+     POSTGRES_DB: str = Field(..., env="POSTGRES_DB")[m
+[31m-    SQLALCHEMY_DATABASE_URI: Optional[PostgresDsn] = None[m
+     [m
+     # Database pool settings - larger pool for production[m
+     DB_POOL_SIZE: int = 10[m
+[36m@@ -182,6 +247,11 @@[m [mclass ProductionSettings(BaseAppSettings):[m
+     [m
+     # Email settings - required for production[m
+     EMAIL_TEMPLATES_DIR: str = "app/email-templates/"[m
+[32m+[m[41m    [m
+[32m+[m[32m    @property[m
+[32m+[m[32m    def SQLALCHEMY_DATABASE_URI(self) -> str:[m
+[32m+[m[32m        """Build database URI from component parts."""[m
+[32m+[m[32m        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"[m
+ [m
+ [m
+ class TestSettings(BaseAppSettings):[m
+[36m@@ -205,28 +275,6 @@[m [mclass TestSettings(BaseAppSettings):[m
+ [m
+ [m
+ # Common validation for all settings classes[m
+[31m-@validator("SQLALCHEMY_DATABASE_URI", pre=True)[m
+[31m-def assemble_db_connection(cls, v: Optional[str], values: Dict[str, Any]) -> Any:[m
+[31m-    """Build the database URI from component parts if not provided directly."""[m
+[31m-    if isinstance(v, str):[m
+[31m-        return v[m
+[31m-    [m
+[31m-    # Get database components, ensuring they're all present[m
+[31m-    required_keys = ["POSTGRES_SERVER", "POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB"][m
+[31m-    missing_keys = [key for key in required_keys if key not in values or not values[key]][m
+[31m-    [m
+[31m-    if missing_keys and values.get("ENVIRONMENT") in [EnvironmentType.STAGING, EnvironmentType.PRODUCTION]:[m
+[31m-        missing_env_vars = [f"{key}" for key in missing_keys][m
+[31m-        raise ValueError(f"Missing required environment variables: {', '.join(missing_env_vars)}")[m
+[31m-    [m
+[31m-    postgres_server = values.get("POSTGRES_SERVER", "localhost")[m
+[31m-    postgres_user = values.get("POSTGRES_USER", "postgres")[m
+[31m-    postgres_password = values.get("POSTGRES_PASSWORD", "postgres")[m
+[31m-    postgres_db = values.get("POSTGRES_DB", "replyrocket")[m
+[31m-    [m
+[31m-    return f"postgresql://{postgres_user}:{postgres_password}@{postgres_server}/{postgres_db}"[m
+[31m-[m
+[31m-[m
+ @validator("BACKEND_CORS_ORIGINS", pre=True)[m
+ def assemble_cors_origins(cls, v: Union[str, List[str]]) -> Union[List[str], str]:[m
+     """Parse CORS origins from string to list."""[m
+[36m@@ -243,7 +291,21 @@[m [mdef get_settings() -> BaseAppSettings:[m
+     Get the appropriate settings based on the ENVIRONMENT variable.[m
+     Falls back to development settings if not specified.[m
+     """[m
+[31m-    env = os.getenv("ENVIRONMENT", "development")[m
+[32m+[m[32m    # Get and clean the environment variable[m
+[32m+[m[32m    env_raw = os.getenv("ENVIRONMENT", "development")[m
+[32m+[m[32m    # Strip any comments and whitespace[m
+[32m+[m[32m    env_str = env_raw.split("#")[0].strip().lower() if env_raw else "development"[m
+[32m+[m[41m    [m
+[32m+[m[32m    # Map environment string to enum value[m
+[32m+[m[32m    env_map = {[m
+[32m+[m[32m        "development": EnvironmentType.DEVELOPMENT,[m
+[32m+[m[32m        "staging": EnvironmentType.STAGING,[m
+[32m+[m[32m        "production": EnvironmentType.PRODUCTION,[m
+[32m+[m[32m        "test": EnvironmentType.TEST[m
+[32m+[m[32m    }[m
+[32m+[m[41m    [m
+[32m+[m[32m    env = env_map.get(env_str, EnvironmentType.DEVELOPMENT)[m
+[32m+[m[41m    [m
+     settings_class = {[m
+         EnvironmentType.DEVELOPMENT: DevelopmentSettings,[m
+         EnvironmentType.STAGING: StagingSettings, [m
+[36m@@ -254,14 +316,27 @@[m [mdef get_settings() -> BaseAppSettings:[m
+     try:[m
+         settings = settings_class()[m
+         [m
+[31m-        # Validate required settings for production environment[m
+[32m+[m[32m        # Check for critical settings[m
+[32m+[m[32m        required_vars = ["SECRET_KEY"][m
+         if env == EnvironmentType.PRODUCTION:[m
+[31m-            required_vars = ["SECRET_KEY", "POSTGRES_PASSWORD", "OPENAI_API_KEY"][m
+[31m-            missing_vars = [var for var in required_vars if not getattr(settings, var, None)][m
+[31m-            if missing_vars:[m
+[31m-                logging.error(f"Missing required environment variables: {', '.join(missing_vars)}")[m
+[32m+[m[32m            required_vars.extend(["POSTGRES_PASSWORD", "OPENAI_API_KEY"])[m
+[32m+[m[41m        [m
+[32m+[m[32m        missing_vars = [var for var in required_vars if not getattr(settings, var, None)][m
+[32m+[m[32m        if missing_vars:[m
+[32m+[m[32m            error_msg = f"Missing required environment variables: {', '.join(missing_vars)}"[m
+[32m+[m[32m            if env == EnvironmentType.PRODUCTION:[m
+[32m+[m[32m                logging.error(error_msg)[m
+                 logging.error("Production deployment requires all security-critical variables to be set!")[m
+                 sys.exit(1)[m
+[32m+[m[32m            else:[m
+[32m+[m[32m                logging.warning(error_msg)[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Log a warning if OPENAI_API_KEY is missing[m
+[32m+[m[32m        if not settings.OPENAI_API_KEY:[m
+[32m+[m[32m            logging.warning("OPENAI_API_KEY is not set. Please check your environment variables.")[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Print SQLALCHEMY_DATABASE_URI for debugging[m
+[32m+[m[32m        logging.info(f"SQLALCHEMY_DATABASE_URI: {settings.SQLALCHEMY_DATABASE_URI}")[m
+         [m
+         return settings[m
+     except Exception as e:[m
+[36m@@ -284,5 +359,34 @@[m [mif settings.IS_DEVELOPMENT:[m
+     print(f"ENVIRONMENT: '{settings.ENVIRONMENT}'")[m
+     print(f"VERSION: '{settings.VERSION}'")[m
+     print(f"SQLALCHEMY_DATABASE_URI: '{settings.SQLALCHEMY_DATABASE_URI}'")[m
+[32m+[m[32m    print(f"DEBUG: DB URL = {settings.SQLALCHEMY_DATABASE_URI}")  # Additional debugging[m
+     print(f".env file location: {os.path.abspath('.env') if os.path.exists('.env') else '.env NOT FOUND!'}")[m
+[31m-    print("="*50 + "\n") [m
+\ No newline at end of file[m
+[32m+[m[32m    print("="*50 + "\n")[m
+[32m+[m
+[32m+[m[32m# Add logging to warn if SQLALCHEMY_DATABASE_URI is missing[m
+[32m+[m[32mif not settings.SQLALCHEMY_DATABASE_URI:[m
+[32m+[m[32m    logging.warning("SQLALCHEMY_DATABASE_URI is not set. Please check your environment variables.")[m
+[32m+[m
+[32m+[m[32m# Function to manually test the database connection[m
+[32m+[m[32mdef test_database_connection():[m
+[32m+[m[32m    from sqlalchemy import create_engine, text[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        db_uri = settings.SQLALCHEMY_DATABASE_URI[m
+[32m+[m[41m        [m
+[32m+[m[32m        if not db_uri:[m
+[32m+[m[32m            logging.error("Database URI is None or empty")[m
+[32m+[m[32m            return False[m
+[32m+[m[41m            [m
+[32m+[m[32m        logging.info(f"Testing database connection with URI: {db_uri}")[m
+[32m+[m[32m        engine = create_engine(db_uri)[m
+[32m+[m[32m        with engine.connect() as connection:[m
+[32m+[m[32m            result = connection.execute(text("SELECT 1"))[m
+[32m+[m[32m            logging.info("Database connection test successful.")[m
+[32m+[m[32m            return result.scalar() == 1[m
+[32m+[m[32m    except Exception as e:[m
+[32m+[m[32m        logging.error(f"Database connection test failed: {str(e)}")[m
+[32m+[m[32m        return False[m
+[32m+[m
+[32m+[m[32m# Run the database connection test[m
+[32m+[m[32mif settings.IS_DEVELOPMENT or settings.IS_TEST:[m
+[32m+[m[32m    test_database_connection()[m[41m [m
+\ No newline at end of file[m

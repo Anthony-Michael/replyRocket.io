@@ -9,6 +9,7 @@ import time
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from app.core.config import settings
 from app.db.session import get_db, get_pool_status
@@ -34,7 +35,7 @@ def health_check(db: Session = Depends(get_db)) -> Dict[str, Any]:
     start_time = time.time()
     try:
         # Execute a simple query to check DB connection
-        db.execute("SELECT 1").fetchall()
+        db.execute(text("SELECT 1")).fetchall()
         db_status = "healthy"
         db_response_time = time.time() - start_time
     except Exception as e:
@@ -73,7 +74,7 @@ def db_health_check(db: Session = Depends(get_db)) -> Dict[str, Any]:
     start_time = time.time()
     try:
         # Execute a simple query to check DB connection
-        result = db.execute("SELECT 1").fetchall()
+        result = db.execute(text("SELECT 1")).fetchall()
         db_status = "healthy"
         db_response_time = time.time() - start_time
     except Exception as e:

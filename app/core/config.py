@@ -57,6 +57,21 @@ class BaseAppSettings(BaseSettings):
     LOG_LEVEL: LogLevel = LogLevel.INFO
     LOG_FORMAT: LogFormat = LogFormat.TEXT
     
+    # Security
+    SECURE_COOKIES: bool = False
+    
+    @validator("ENVIRONMENT", pre=True)
+    def validate_environment(cls, v: Any) -> EnvironmentType:
+        if isinstance(v, str):
+            # Strip comments and whitespace
+            v = v.split("#")[0].strip().lower()
+            try:
+                return EnvironmentType(v)
+            except ValueError:
+                logging.warning(f"Invalid environment value: '{v}'. Falling back to development.")
+                return EnvironmentType.DEVELOPMENT
+        return v
+    
     @validator("IS_DEVELOPMENT", "IS_STAGING", "IS_PRODUCTION", "IS_TEST", pre=True, always=True)
     def set_environment_flags(cls, v: bool, values: Dict[str, Any]) -> bool:
         if "ENVIRONMENT" not in values:
@@ -65,6 +80,42 @@ class BaseAppSettings(BaseSettings):
         if v:  # If manually set to True, respect that
             return True
         return cls._check_environment_match(env, v)
+    
+    @validator("LOG_LEVEL", pre=True)
+    def validate_log_level(cls, v: Any) -> LogLevel:
+        if isinstance(v, str):
+            # Strip comments and whitespace
+            v = v.split("#")[0].strip().upper()
+            try:
+                return LogLevel(v)
+            except ValueError:
+                logging.warning(f"Invalid log level value: '{v}'. Falling back to INFO.")
+                return LogLevel.INFO
+        return v
+    
+    @validator("LOG_FORMAT", pre=True)
+    def validate_log_format(cls, v: Any) -> LogFormat:
+        if isinstance(v, str):
+            # Strip comments and whitespace
+            v = v.split("#")[0].strip().lower()
+            try:
+                return LogFormat(v)
+            except ValueError:
+                logging.warning(f"Invalid log format value: '{v}'. Falling back to TEXT.")
+                return LogFormat.TEXT
+        return v
+    
+    @validator("SECURE_COOKIES", pre=True)
+    def validate_secure_cookies(cls, v: Any) -> bool:
+        if isinstance(v, str):
+            # Strip comments and whitespace
+            v = v.split("#")[0].strip().lower()
+            if v in ("true", "yes", "1", "t", "y"):
+                return True
+            if v in ("false", "no", "0", "f", "n"):
+                return False
+            logging.warning(f"Invalid secure cookies value: '{v}'. Falling back to False.")
+        return False
     
     @classmethod
     def _check_environment_match(cls, env: EnvironmentType, flag_value: bool) -> bool:
@@ -98,10 +149,14 @@ class DevelopmentSettings(BaseAppSettings):
     
     # Database settings
     POSTGRES_SERVER: str = "localhost"
+    POSTGRES_PORT: int = 5432  # Default PostgreSQL port
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "postgres"
     POSTGRES_DB: str = "replyrocket_dev"
-    SQLALCHEMY_DATABASE_URI: Optional[PostgresDsn] = None
+    
+    # AI Service settings
+    OPENAI_API_KEY: str = Field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
+    AI_MODEL: str = "gpt-3.5-turbo"
     
     # Database pool settings for development (smaller pool)
     DB_POOL_SIZE: int = 2
@@ -111,6 +166,11 @@ class DevelopmentSettings(BaseAppSettings):
     
     # Logging
     LOG_LEVEL: LogLevel = LogLevel.DEBUG
+    
+    @property
+    def SQLALCHEMY_DATABASE_URI(self) -> str:
+        """Build database URI from component parts."""
+        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
 
 
 class StagingSettings(BaseAppSettings):
@@ -131,16 +191,21 @@ class StagingSettings(BaseAppSettings):
     
     # Database settings
     POSTGRES_SERVER: str = Field(..., env="POSTGRES_SERVER")
+    POSTGRES_PORT: int = Field(5432, env="POSTGRES_PORT")
     POSTGRES_USER: str = Field(..., env="POSTGRES_USER")
     POSTGRES_PASSWORD: str = Field(..., env="POSTGRES_PASSWORD")
     POSTGRES_DB: str = Field(..., env="POSTGRES_DB")
-    SQLALCHEMY_DATABASE_URI: Optional[PostgresDsn] = None
     
     # Database pool settings 
     DB_POOL_SIZE: int = 5
     DB_MAX_OVERFLOW: int = 10
     DB_POOL_TIMEOUT: int = 30
     DB_POOL_RECYCLE: int = 1800
+    
+    @property
+    def SQLALCHEMY_DATABASE_URI(self) -> str:
+        """Build database URI from component parts."""
+        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
 
 
 class ProductionSettings(BaseAppSettings):
@@ -161,10 +226,10 @@ class ProductionSettings(BaseAppSettings):
     
     # Database settings
     POSTGRES_SERVER: str = Field(..., env="POSTGRES_SERVER")
+    POSTGRES_PORT: int = Field(5432, env="POSTGRES_PORT")
     POSTGRES_USER: str = Field(..., env="POSTGRES_USER")
     POSTGRES_PASSWORD: str = Field(..., env="POSTGRES_PASSWORD")
     POSTGRES_DB: str = Field(..., env="POSTGRES_DB")
-    SQLALCHEMY_DATABASE_URI: Optional[PostgresDsn] = None
     
     # Database pool settings - larger pool for production
     DB_POOL_SIZE: int = 10
@@ -182,6 +247,11 @@ class ProductionSettings(BaseAppSettings):
     
     # Email settings - required for production
     EMAIL_TEMPLATES_DIR: str = "app/email-templates/"
+    
+    @property
+    def SQLALCHEMY_DATABASE_URI(self) -> str:
+        """Build database URI from component parts."""
+        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
 
 
 class TestSettings(BaseAppSettings):
@@ -205,28 +275,6 @@ class TestSettings(BaseAppSettings):
 
 
 # Common validation for all settings classes
-@validator("SQLALCHEMY_DATABASE_URI", pre=True)
-def assemble_db_connection(cls, v: Optional[str], values: Dict[str, Any]) -> Any:
-    """Build the database URI from component parts if not provided directly."""
-    if isinstance(v, str):
-        return v
-    
-    # Get database components, ensuring they're all present
-    required_keys = ["POSTGRES_SERVER", "POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB"]
-    missing_keys = [key for key in required_keys if key not in values or not values[key]]
-    
-    if missing_keys and values.get("ENVIRONMENT") in [EnvironmentType.STAGING, EnvironmentType.PRODUCTION]:
-        missing_env_vars = [f"{key}" for key in missing_keys]
-        raise ValueError(f"Missing required environment variables: {', '.join(missing_env_vars)}")
-    
-    postgres_server = values.get("POSTGRES_SERVER", "localhost")
-    postgres_user = values.get("POSTGRES_USER", "postgres")
-    postgres_password = values.get("POSTGRES_PASSWORD", "postgres")
-    postgres_db = values.get("POSTGRES_DB", "replyrocket")
-    
-    return f"postgresql://{postgres_user}:{postgres_password}@{postgres_server}/{postgres_db}"
-
-
 @validator("BACKEND_CORS_ORIGINS", pre=True)
 def assemble_cors_origins(cls, v: Union[str, List[str]]) -> Union[List[str], str]:
     """Parse CORS origins from string to list."""
@@ -243,7 +291,21 @@ def get_settings() -> BaseAppSettings:
     Get the appropriate settings based on the ENVIRONMENT variable.
     Falls back to development settings if not specified.
     """
-    env = os.getenv("ENVIRONMENT", "development")
+    # Get and clean the environment variable
+    env_raw = os.getenv("ENVIRONMENT", "development")
+    # Strip any comments and whitespace
+    env_str = env_raw.split("#")[0].strip().lower() if env_raw else "development"
+    
+    # Map environment string to enum value
+    env_map = {
+        "development": EnvironmentType.DEVELOPMENT,
+        "staging": EnvironmentType.STAGING,
+        "production": EnvironmentType.PRODUCTION,
+        "test": EnvironmentType.TEST
+    }
+    
+    env = env_map.get(env_str, EnvironmentType.DEVELOPMENT)
+    
     settings_class = {
         EnvironmentType.DEVELOPMENT: DevelopmentSettings,
         EnvironmentType.STAGING: StagingSettings, 
@@ -254,14 +316,27 @@ def get_settings() -> BaseAppSettings:
     try:
         settings = settings_class()
         
-        # Validate required settings for production environment
+        # Check for critical settings
+        required_vars = ["SECRET_KEY"]
         if env == EnvironmentType.PRODUCTION:
-            required_vars = ["SECRET_KEY", "POSTGRES_PASSWORD", "OPENAI_API_KEY"]
-            missing_vars = [var for var in required_vars if not getattr(settings, var, None)]
-            if missing_vars:
-                logging.error(f"Missing required environment variables: {', '.join(missing_vars)}")
+            required_vars.extend(["POSTGRES_PASSWORD", "OPENAI_API_KEY"])
+        
+        missing_vars = [var for var in required_vars if not getattr(settings, var, None)]
+        if missing_vars:
+            error_msg = f"Missing required environment variables: {', '.join(missing_vars)}"
+            if env == EnvironmentType.PRODUCTION:
+                logging.error(error_msg)
                 logging.error("Production deployment requires all security-critical variables to be set!")
                 sys.exit(1)
+            else:
+                logging.warning(error_msg)
+        
+        # Log a warning if OPENAI_API_KEY is missing
+        if not settings.OPENAI_API_KEY:
+            logging.warning("OPENAI_API_KEY is not set. Please check your environment variables.")
+        
+        # Print SQLALCHEMY_DATABASE_URI for debugging
+        logging.info(f"SQLALCHEMY_DATABASE_URI: {settings.SQLALCHEMY_DATABASE_URI}")
         
         return settings
     except Exception as e:
@@ -284,5 +359,34 @@ if settings.IS_DEVELOPMENT:
     print(f"ENVIRONMENT: '{settings.ENVIRONMENT}'")
     print(f"VERSION: '{settings.VERSION}'")
     print(f"SQLALCHEMY_DATABASE_URI: '{settings.SQLALCHEMY_DATABASE_URI}'")
+    print(f"DEBUG: DB URL = {settings.SQLALCHEMY_DATABASE_URI}")  # Additional debugging
     print(f".env file location: {os.path.abspath('.env') if os.path.exists('.env') else '.env NOT FOUND!'}")
-    print("="*50 + "\n") 
+    print("="*50 + "\n")
+
+# Add logging to warn if SQLALCHEMY_DATABASE_URI is missing
+if not settings.SQLALCHEMY_DATABASE_URI:
+    logging.warning("SQLALCHEMY_DATABASE_URI is not set. Please check your environment variables.")
+
+# Function to manually test the database connection
+def test_database_connection():
+    from sqlalchemy import create_engine, text
+    try:
+        db_uri = settings.SQLALCHEMY_DATABASE_URI
+        
+        if not db_uri:
+            logging.error("Database URI is None or empty")
+            return False
+            
+        logging.info(f"Testing database connection with URI: {db_uri}")
+        engine = create_engine(db_uri)
+        with engine.connect() as connection:
+            result = connection.execute(text("SELECT 1"))
+            logging.info("Database connection test successful.")
+            return result.scalar() == 1
+    except Exception as e:
+        logging.error(f"Database connection test failed: {str(e)}")
+        return False
+
+# Run the database connection test
+if settings.IS_DEVELOPMENT or settings.IS_TEST:
+    test_database_connection() 

@@ -14,6 +14,7 @@ from app.schemas.token import (
     AccessToken,
     RefreshTokenCreate,
     RefreshTokenDB,
+    TokenWithoutRefresh,
 )
 
 # Import User schemas from user.py
@@ -62,6 +63,7 @@ __all__ = [
     "AccessToken",
     "RefreshTokenCreate",
     "RefreshTokenDB",
+    "TokenWithoutRefresh",
     
     # User schemas
     "User",
