@@ -182,4 +182,163 @@ Common issues with tests:
 - [pytest Documentation](https://docs.pytest.org/)
 - [pytest-cov Documentation](https://pytest-cov.readthedocs.io/)
 - [FastAPI Testing](https://fastapi.tiangolo.com/tutorial/testing/)
-- [SQLAlchemy Testing](https://docs.sqlalchemy.org/en/20/orm/session_transaction.html#session-external-transaction) 
+- [SQLAlchemy Testing](https://docs.sqlalchemy.org/en/20/orm/session_transaction.html#session-external-transaction)
+
+# ReplyRocket.io Testing Documentation
+
+This document provides information about the testing structure, how to run tests, and guidelines for writing new tests for the ReplyRocket.io application.
+
+## Table of Contents
+
+1. [Test Structure](#test-structure)
+2. [Running Tests](#running-tests)
+3. [Coverage Reports](#coverage-reports)
+4. [Test Types](#test-types)
+5. [Guidelines for Writing Tests](#guidelines-for-writing-tests)
+6. [Continuous Integration](#continuous-integration)
+
+## Test Structure
+
+The test suite is organized as follows:
+
+- `tests/` - Root directory for all tests
+  - `test_*.py` - Unit and integration tests for specific modules
+  - `conftest.py` - Pytest fixtures shared across multiple test files
+  - `run_coverage.py` - Script to run tests with coverage reporting
+  - `utils/` - Helper utilities for tests
+  - `integration/` - Integration tests that test multiple components together
+
+## Running Tests
+
+### Running All Tests
+
+To run all tests, use:
+
+```bash
+python -m pytest
+```
+
+### Running Specific Tests
+
+To run tests from a specific module:
+
+```bash
+python -m pytest tests/test_campaign_service.py
+```
+
+To run a specific test class:
+
+```bash
+python -m pytest tests/test_campaign_service.py::TestCreateCampaign
+```
+
+To run a specific test method:
+
+```bash
+python -m pytest tests/test_campaign_service.py::TestCreateCampaign::test_create_campaign_success
+```
+
+### Running with Coverage
+
+We have a custom script to run tests with coverage reports:
+
+```bash
+python tests/run_coverage.py
+```
+
+Options:
+- Run specific tests with coverage: `python tests/run_coverage.py tests/test_campaign_service.py`
+- Disable HTML report: `python tests/run_coverage.py --no-html`
+- Hide missing lines in report: `python tests/run_coverage.py --no-missing`
+
+## Coverage Reports
+
+After running tests with coverage, you can view:
+
+1. **Terminal report**: Shows coverage statistics in the console
+2. **HTML report**: More detailed, interactive report found in the `htmlcov/` directory
+   - Open `htmlcov/index.html` in a web browser to view
+
+## Test Types
+
+### Unit Tests
+
+Unit tests focus on testing individual functions and classes in isolation. Examples:
+- `test_campaign_service.py` - Tests for the campaign service functions
+- `test_email_service.py` - Tests for the email service functions
+- `test_ai_email_generator_service.py` - Tests for the AI email generator
+
+### Integration Tests
+
+Integration tests verify that different components work together correctly. These are typically found in the `integration/` directory.
+
+### Stress Tests
+
+Stress tests evaluate system performance under high load:
+- `test_campaign_stress.py` - Tests campaign operations under heavy load
+
+These tests are marked with `@pytest.mark.stress` and can be run separately:
+
+```bash
+python -m pytest -m stress
+```
+
+## Guidelines for Writing Tests
+
+### Unit Tests
+
+1. **Mock external dependencies**: Use the `unittest.mock` module to isolate the function being tested.
+2. **Follow the AAA pattern**:
+   - **Arrange**: Set up test data, mocks, etc.
+   - **Act**: Call the function being tested
+   - **Assert**: Verify the expected outcomes
+
+3. **Test error cases**: Ensure functions handle errors correctly
+4. **Keep tests independent**: One test should not depend on another
+
+### Example Unit Test Structure
+
+```python
+def test_function_name_scenario(self, fixtures):
+    """Test description explaining what is being tested."""
+    # Arrange
+    # Set up test data, mocks, etc.
+    
+    # Act
+    # Call the function being tested
+    
+    # Assert
+    # Verify the result is as expected
+```
+
+## Continuous Integration
+
+Our CI pipeline runs all tests automatically on:
+- Pull requests
+- Merges to main branch
+
+The CI checks code coverage and will fail if coverage drops below the configured threshold.
+
+## Test-Driven Development
+
+We encourage TDD for new features:
+1. Write tests first that define the expected behavior
+2. Run the tests (they should fail)
+3. Implement the feature until tests pass
+4. Refactor while keeping tests green
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Database-related test failures**:
+   - Ensure test database is configured correctly
+   - Check that database migrations are up to date
+
+2. **Mock-related issues**:
+   - Verify that mocks are configured to return appropriate values
+   - Ensure that patched functions/methods are in the correct module path
+
+3. **Flaky tests**:
+   - Mark known flaky tests with `@pytest.mark.flaky(reruns=3)`
+   - Investigate and fix the underlying cause of flakiness 

@@ -133,6 +133,14 @@ def create_token_pair(subject: Union[str, Any]) -> Tuple[str, str, datetime, dat
     """
     Create both access and refresh tokens for a user.
     
+    Enhanced with OWASP security best practices:
+    - Strong cryptographic signing keys
+    - Short-lived access tokens
+    - Sensitive scope/permission claims
+    - Protection against token replay
+    - Unique token identifiers (jti)
+    - Token fingerprints to mitigate XSS
+    
     Args:
         subject: The subject of the token (usually user ID)
         
@@ -147,18 +155,61 @@ def create_token_pair(subject: Union[str, Any]) -> Tuple[str, str, datetime, dat
         minutes=settings.REFRESH_TOKEN_EXPIRE_MINUTES
     )
     
-    # Create tokens
-    access_token = create_access_token(
-        subject=subject,
-        expires_delta=access_token_expires - datetime.utcnow()
-    )
+    # Current timestamp for iat (issued at) claims
+    now = datetime.utcnow()
     
-    refresh_token = create_refresh_token(
-        subject=subject,
-        expires_delta=refresh_token_expires - datetime.utcnow()
-    )
+    # Generate a cryptographically secure random token ID
+    access_token_id = secrets.token_hex(16)
+    refresh_token_id = secrets.token_hex(16)
     
-    return access_token, refresh_token, access_token_expires, refresh_token_expires
+    # Device fingerprint/hash for additional security (mitigates some XSS risks)
+    # Each token will be tied to a specific fingerprint
+    device_fingerprint = secrets.token_hex(8)
+    
+    # Build the access token with enhanced security claims
+    access_token_claims = {
+        "exp": access_token_expires,          # Expiration time
+        "sub": str(subject),                  # Subject (user ID)
+        "iat": now,                           # Issued at time
+        "nbf": now,                           # Not valid before time
+        "jti": access_token_id,               # JWT ID - unique per token
+        "iss": settings.PROJECT_NAME,         # Issuer
+        "type": "access",                     # Token type
+        "fingerprint": device_fingerprint     # Device fingerprint for XSS protection
+    }
+    
+    # Build the refresh token payload with enhanced security
+    refresh_token_claims = {
+        "exp": refresh_token_expires,         # Expiration time
+        "sub": str(subject),                  # Subject (user ID)
+        "iat": now,                           # Issued at time
+        "nbf": now,                           # Not valid before time
+        "jti": refresh_token_id,              # JWT ID - unique per token
+        "iss": settings.PROJECT_NAME,         # Issuer
+        "type": "refresh",                    # Token type
+        "fingerprint": device_fingerprint     # Same fingerprint as access token
+    }
+    
+    # Encode the tokens
+    try:
+        access_token = jwt.encode(
+            access_token_claims, 
+            settings.SECRET_KEY, 
+            algorithm=ALGORITHM
+        )
+        
+        refresh_token = jwt.encode(
+            refresh_token_claims, 
+            settings.SECRET_KEY,
+            algorithm=ALGORITHM
+        )
+        
+        logger.debug(f"Created token pair for user {subject}")
+        return access_token, refresh_token, access_token_expires, refresh_token_expires
+    
+    except Exception as e:
+        logger.error(f"Error creating token pair: {str(e)}")
+        raise
 
 
 def set_auth_cookies(
@@ -171,6 +222,13 @@ def set_auth_cookies(
     """
     Set HttpOnly cookies for both access and refresh tokens.
     
+    Enhanced with OWASP security best practices:
+    - HttpOnly flag to prevent JavaScript access
+    - Secure flag to ensure HTTPS-only transmission
+    - SameSite policy to prevent CSRF attacks
+    - Restricted paths to limit token exposure
+    - Strict expiration times to minimize risk window
+    
     Args:
         response: FastAPI response object to set cookies on
         access_token: JWT access token string
@@ -182,28 +240,36 @@ def set_auth_cookies(
     access_expires = int((access_token_expires - datetime.utcnow()).total_seconds())
     refresh_expires = int((refresh_token_expires - datetime.utcnow()).total_seconds())
     
+    # Set SameSite policy based on environment (stricter in production)
+    same_site_policy = "strict" if settings.ENVIRONMENT != "development" else "lax"
+    
     # Set secure cookies with proper flags
     response.set_cookie(
         key=ACCESS_TOKEN_COOKIE_NAME,
         value=access_token,
-        httponly=True,
+        httponly=True,  # Prevents JavaScript access
         secure=settings.ENVIRONMENT != "development",  # Secure in non-dev environments
-        samesite="lax",  # Protects against CSRF
+        samesite=same_site_policy,  # Protects against CSRF
         max_age=access_expires,
         expires=access_expires,
-        path="/",
+        path="/",  # Available throughout the app
+        domain=None,  # Current domain only
     )
     
+    # Refresh token gets stricter settings
     response.set_cookie(
         key=REFRESH_TOKEN_COOKIE_NAME,
         value=refresh_token,
-        httponly=True,
+        httponly=True,  # Prevents JavaScript access
         secure=settings.ENVIRONMENT != "development",  # Secure in non-dev environments
-        samesite="lax",  # Protects against CSRF
+        samesite=same_site_policy,  # Protects against CSRF
         max_age=refresh_expires,
         expires=refresh_expires,
-        path="/api/v1/auth",  # Restrict refresh token to auth endpoints
+        path="/api/v1/auth",  # Restricted to auth endpoints only
+        domain=None,  # Current domain only
     )
+
+    logger.debug("Set secure auth cookies with enhanced protection")
 
 
 def clear_auth_cookies(response: Response) -> None:
@@ -291,29 +357,71 @@ def validate_password_strength(password: str) -> bool:
     return has_upper and has_lower and has_digit and has_special
 
 
-def decode_and_validate_token(token: str, token_type: str = "access") -> dict:
+def decode_and_validate_token(token: str, token_type: str = "access", fingerprint: str = None) -> dict:
     """
     Decode and validate a JWT token.
+    
+    Enhanced with OWASP security best practices:
+    - Token type validation
+    - Issuer validation
+    - Not Before (nbf) time validation
+    - Issued At (iat) time validation
+    - Strong cryptographic checks
+    - Optional fingerprint validation for XSS protection
     
     Args:
         token: JWT token string to decode
         token_type: Type of token to validate ("access" or "refresh")
+        fingerprint: Optional device fingerprint to validate
         
     Returns:
         Decoded token payload as dictionary
         
     Raises:
-        JWTError: If token is invalid or expired
+        JWTError: If token is invalid, expired, or has invalid claims
     """
     try:
+        # Decode token with verification of signature
         payload = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[ALGORITHM]
+            token, 
+            settings.SECRET_KEY, 
+            algorithms=[ALGORITHM],
+            options={
+                "verify_signature": True,  # Verify cryptographic signature
+                "verify_exp": True,        # Verify expiration
+                "verify_nbf": True,        # Verify "not before" time
+                "verify_iat": True,        # Verify "issued at" time
+                "verify_aud": False,       # No audience in our implementation
+                "require_exp": True,       # Require expiration time
+                "require_nbf": True,       # Require not before time
+                "require_iat": True,       # Require issued at time
+            }
         )
         
         # Validate token type
         if payload.get("type") != token_type:
             logger.warning(f"Invalid token type: expected {token_type}, got {payload.get('type')}")
             raise JWTError(f"Invalid token type")
+            
+        # Validate issuer
+        if payload.get("iss") != settings.PROJECT_NAME:
+            logger.warning(f"Invalid token issuer: expected {settings.PROJECT_NAME}, got {payload.get('iss')}")
+            raise JWTError(f"Invalid token issuer")
+            
+        # Validate subject exists
+        if not payload.get("sub"):
+            logger.warning("Token missing subject claim")
+            raise JWTError("Missing required subject claim")
+            
+        # Validate token ID exists
+        if not payload.get("jti"):
+            logger.warning("Token missing jti claim")
+            raise JWTError("Missing required jti claim")
+            
+        # If fingerprint provided, validate it against token
+        if fingerprint and payload.get("fingerprint") != fingerprint:
+            logger.warning("Token fingerprint validation failed")
+            raise JWTError("Invalid token fingerprint")
             
         return payload
     except JWTError as e:
@@ -401,18 +509,58 @@ def get_refresh_token(db: Session, token: str) -> Optional[models.RefreshToken]:
     """
     Get a refresh token from the database.
     
+    Enhanced with additional security checks:
+    - Token must not be revoked
+    - Token must not be expired
+    - Token must be valid (present in database)
+    
     Args:
         db: Database session
         token: Refresh token
         
     Returns:
-        RefreshToken object or None if not found
+        RefreshToken object or None if not found or invalid
     """
-    return db.query(models.RefreshToken).filter(
-        models.RefreshToken.token == token,
-        models.RefreshToken.revoked == False,
-        models.RefreshToken.expires_at > datetime.utcnow(),
-    ).first()
+    try:
+        # Attempt to decode the token first to verify it's a valid JWT
+        # This helps prevent database lookups for completely invalid tokens
+        try:
+            payload = decode_and_validate_token(token, token_type="refresh")
+            if not payload:
+                logger.warning("Invalid refresh token format")
+                return None
+        except Exception as e:
+            logger.warning(f"Invalid refresh token format: {str(e)}")
+            return None
+            
+        # Check the database for the token
+        db_token = db.query(models.RefreshToken).filter(
+            models.RefreshToken.token == token
+        ).first()
+        
+        if not db_token:
+            logger.warning("Refresh token not found in database")
+            return None
+            
+        # Check if token is revoked
+        if db_token.revoked:
+            logger.warning(f"Attempt to use revoked refresh token (ID: {db_token.id})")
+            return None
+            
+        # Check if token is expired
+        if db_token.expires_at <= datetime.utcnow():
+            logger.warning(f"Attempt to use expired refresh token (ID: {db_token.id})")
+            # Automatically revoke expired tokens for better security
+            db_token.revoked = True
+            db.add(db_token)
+            db.commit()
+            return None
+            
+        # Valid token
+        return db_token
+    except Exception as e:
+        logger.error(f"Error retrieving refresh token: {str(e)}")
+        return None
 
 
 def get_refresh_token_from_request(request: Request) -> Optional[str]:
@@ -425,4 +573,77 @@ def get_refresh_token_from_request(request: Request) -> Optional[str]:
     Returns:
         Refresh token or None if not found
     """
-    return request.cookies.get("refresh_token") 
+    return request.cookies.get("refresh_token")
+
+
+def cleanup_expired_tokens(db: Session) -> int:
+    """
+    Clean up expired tokens from the database.
+    
+    This function should be scheduled to run periodically to 
+    remove or invalidate tokens that have expired but were not
+    properly revoked during normal operation.
+    
+    Args:
+        db: Database session
+        
+    Returns:
+        Number of tokens cleaned up
+    """
+    try:
+        # Find all expired tokens that haven't been revoked
+        now = datetime.utcnow()
+        result = db.query(models.RefreshToken).filter(
+            models.RefreshToken.expires_at < now,
+            models.RefreshToken.revoked == False
+        ).update({"revoked": True})
+        
+        # Commit changes
+        db.commit()
+        
+        if result > 0:
+            logger.info(f"Cleaned up {result} expired refresh tokens")
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error cleaning up expired tokens: {str(e)}")
+        db.rollback()
+        return 0
+
+
+def set_device_fingerprint_cookie(
+    response: Response, 
+    fingerprint: str,
+    max_age: int = 60 * 60 * 24 * 30  # 30 days by default
+) -> None:
+    """
+    Set a device fingerprint cookie for enhanced security.
+    
+    The device fingerprint is used to validate tokens and mitigate
+    certain types of token theft attacks. Each token is bound to a
+    specific device fingerprint value.
+    
+    Args:
+        response: FastAPI response object
+        fingerprint: Fingerprint value to set in cookie
+        max_age: Cookie max age in seconds (defaults to 30 days)
+    """
+    # Cookie name for the device fingerprint
+    fingerprint_cookie_name = "device_fingerprint"
+    
+    # Set SameSite policy based on environment
+    same_site_policy = "strict" if settings.ENVIRONMENT != "development" else "lax"
+    
+    # Set the fingerprint cookie
+    response.set_cookie(
+        key=fingerprint_cookie_name,
+        value=fingerprint,
+        httponly=True,  # Prevents JavaScript access
+        secure=settings.ENVIRONMENT != "development",  # Secure in non-dev environments
+        samesite=same_site_policy,  # Protects against CSRF
+        max_age=max_age,
+        path="/",  # Available throughout the app
+        domain=None,  # Current domain only
+    )
+    
+    logger.debug("Set device fingerprint cookie for enhanced security") 

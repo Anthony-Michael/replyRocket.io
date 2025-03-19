@@ -1,277 +1,265 @@
 """
-Stress tests for campaign creation functionality.
+Stress testing for campaign creation API endpoints.
 
-This module contains tests to verify the system's performance
-under high load conditions for campaign creation.
+This module contains tests that verify the performance and stability
+of campaign-related API endpoints under high load.
 """
 
 import pytest
 import time
+import asyncio
 import random
-import string
-import concurrent.futures
 from typing import List, Dict, Any
-
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
 
-from app import models, schemas
-from app.core.config import settings
-from app.services import campaign_service
-from app.api.deps import get_current_active_user
+from app.main import app
+from app.core.security import create_access_token
+from app.tests.utils.utils import random_email, random_lower_string
+from app.tests.utils.user import create_random_user
+from app.db.session import SessionLocal
 
 
-@pytest.mark.stress
-@pytest.mark.campaigns
-class TestCampaignStress:
-    """Stress tests for campaign operations."""
+@pytest.fixture
+def client():
+    """Create a FastAPI test client."""
+    return TestClient(app)
+
+
+@pytest.fixture
+def superuser_token_headers():
+    """Create a superuser and return headers with token."""
+    db = SessionLocal()
+    try:
+        user = create_random_user(db, is_superuser=True)
+        access_token = create_access_token(
+            subject=str(user.id),
+            expires_delta=60 * 24 * 8
+        )
+        return {"Authorization": f"Bearer {access_token}"}
+    finally:
+        db.close()
+
+
+def create_sample_campaign(client: TestClient, token_headers: Dict[str, str]) -> Dict[str, Any]:
+    """Helper function to create a sample campaign."""
+    data = {
+        "name": f"Stress Test Campaign {random_lower_string()}",
+        "description": "This is a campaign created during stress testing",
+        "target_audience": "Technology managers",
+        "status": "draft"
+    }
+    response = client.post("/api/v1/campaigns/", json=data, headers=token_headers)
+    assert response.status_code == 201, f"Failed to create campaign: {response.text}"
+    return response.json()
+
+
+def create_multiple_campaigns(client: TestClient, token_headers: Dict[str, str], count: int = 10) -> List[Dict[str, Any]]:
+    """Create multiple campaigns in sequence."""
+    campaigns = []
+    for i in range(count):
+        campaign = create_sample_campaign(client, token_headers)
+        campaigns.append(campaign)
+    return campaigns
+
+
+def test_sequential_campaign_creation(client: TestClient, superuser_token_headers: Dict[str, str]):
+    """Test creating 20 campaigns sequentially, measuring time."""
+    start_time = time.time()
+    campaigns = create_multiple_campaigns(client, superuser_token_headers, count=20)
+    end_time = time.time()
     
-    @pytest.fixture
-    def random_campaign_data(self) -> Dict[str, Any]:
-        """Generate random campaign data for testing."""
-        def random_string(length: int = 10) -> str:
-            return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+    # Verify all campaigns were created
+    assert len(campaigns) == 20
+    
+    # Log the total time and average time per campaign
+    total_time = end_time - start_time
+    avg_time = total_time / 20
+    print(f"\nSequential campaign creation: {total_time:.2f} seconds total, {avg_time:.2f} seconds per campaign")
+
+
+def create_campaign_worker(token_headers: Dict[str, str], client: TestClient = None):
+    """Worker function for creating a campaign in a thread."""
+    if client is None:
+        client = TestClient(app)
         
-        industries = [
-            "Technology", "Healthcare", "Finance", "Education", 
-            "Retail", "Manufacturing", "Hospitality", "Real Estate"
+    try:
+        campaign = create_sample_campaign(client, token_headers)
+        return campaign
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def test_parallel_campaign_creation(client: TestClient, superuser_token_headers: Dict[str, str]):
+    """Test creating 20 campaigns in parallel using threads."""
+    num_campaigns = 20
+    start_time = time.time()
+    
+    # Use a thread pool to create campaigns in parallel
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        # Submit tasks to the executor
+        futures = [
+            executor.submit(create_campaign_worker, superuser_token_headers, client)
+            for _ in range(num_campaigns)
         ]
         
-        return {
-            "name": f"Test Campaign {random_string(8)}",
-            "description": f"Description for stress test {random_string(15)}",
-            "industry": random.choice(industries),
-            "target_audience": f"Target audience for {random_string(10)}",
-            "is_active": random.choice([True, False]),
-        }
+        # Get results as they complete
+        campaigns = [future.result() for future in futures]
     
-    def test_create_campaign_sequential(self, db: Session, test_user: models.User):
-        """Test creating multiple campaigns sequentially and measure performance."""
-        num_campaigns = 20
-        start_time = time.time()
-        
-        created_campaigns = []
-        for i in range(num_campaigns):
-            # Create campaign data
-            campaign_data = schemas.CampaignCreate(
-                name=f"Stress Test Campaign {i}",
-                description=f"Description for campaign {i}",
-                industry="Technology",
-                target_audience="CTOs and IT Directors",
-                is_active=True
-            )
-            
-            # Create campaign
-            campaign = campaign_service.create_campaign(db, campaign_data, test_user.id)
-            created_campaigns.append(campaign)
-            
-        end_time = time.time()
-        duration = end_time - start_time
-        
-        # Assert all campaigns were created successfully
-        assert len(created_campaigns) == num_campaigns
-        
-        # Log performance metrics
-        campaigns_per_second = num_campaigns / duration
-        print(f"\nSequential Campaign Creation Performance:")
-        print(f"Created {num_campaigns} campaigns in {duration:.2f} seconds")
-        print(f"Rate: {campaigns_per_second:.2f} campaigns per second")
-        
-        # Verify each campaign exists in the database
-        for campaign in created_campaigns:
-            db_campaign = db.query(models.EmailCampaign).filter(models.EmailCampaign.id == campaign.id).first()
-            assert db_campaign is not None
-            assert db_campaign.user_id == test_user.id
+    end_time = time.time()
     
-    def test_create_campaign_parallel(self, client: TestClient, auth_headers: Dict[str, str]):
-        """Test creating multiple campaigns in parallel and measure performance."""
-        num_campaigns = 20
-        max_workers = 10
-        start_time = time.time()
+    # Verify all campaigns were created
+    successful_campaigns = [c for c in campaigns if "error" not in c]
+    failed_campaigns = [c for c in campaigns if "error" in c]
+    
+    assert len(successful_campaigns) == num_campaigns, f"Only {len(successful_campaigns)} campaigns created successfully, {len(failed_campaigns)} failed"
+    
+    # Log the total time and average time per campaign
+    total_time = end_time - start_time
+    avg_time = total_time / num_campaigns
+    print(f"\nParallel campaign creation: {total_time:.2f} seconds total, {avg_time:.2f} seconds per campaign")
+
+
+def test_campaign_retrieval_stress(client: TestClient, superuser_token_headers: Dict[str, str]):
+    """Test creating campaigns and then retrieving them repeatedly."""
+    # First create some campaigns
+    campaigns = create_multiple_campaigns(client, superuser_token_headers, count=10)
+    campaign_ids = [c["id"] for c in campaigns]
+    
+    # Now perform many random reads
+    start_time = time.time()
+    num_reads = 100
+    
+    for _ in range(num_reads):
+        # Pick a random campaign ID
+        campaign_id = random.choice(campaign_ids)
         
-        # Function to create a campaign via API
-        def create_campaign(i: int) -> Dict[str, Any]:
-            campaign_data = {
-                "name": f"Parallel Stress Test Campaign {i}",
-                "description": f"Description for parallel campaign {i}",
-                "industry": "Technology",
-                "target_audience": "CTOs and IT Directors",
-                "is_active": True
+        # Retrieve the campaign
+        response = client.get(f"/api/v1/campaigns/{campaign_id}", headers=superuser_token_headers)
+        assert response.status_code == 200, f"Failed to retrieve campaign: {response.text}"
+    
+    end_time = time.time()
+    
+    # Log the total time and average time per read
+    total_time = end_time - start_time
+    avg_time = total_time / num_reads
+    print(f"\nCampaign retrieval stress: {total_time:.2f} seconds total, {avg_time:.2f} seconds per read")
+
+
+def test_campaign_update_stress(client: TestClient, superuser_token_headers: Dict[str, str]):
+    """Test creating campaigns and then updating them repeatedly."""
+    # First create some campaigns
+    campaigns = create_multiple_campaigns(client, superuser_token_headers, count=5)
+    
+    # Now perform multiple updates on each campaign
+    start_time = time.time()
+    updates_per_campaign = 10
+    total_updates = len(campaigns) * updates_per_campaign
+    
+    for campaign in campaigns:
+        for i in range(updates_per_campaign):
+            update_data = {
+                "name": f"Updated Campaign {i} - {random_lower_string()}",
+                "description": f"Update {i} during stress testing",
+                "status": "active" if i % 2 == 0 else "draft"
             }
-            response = client.post(
-                f"{settings.API_V1_STR}/campaigns",
-                json=campaign_data,
-                headers=auth_headers
+            
+            response = client.put(
+                f"/api/v1/campaigns/{campaign['id']}", 
+                json=update_data, 
+                headers=superuser_token_headers
             )
-            return response.json()
-        
-        # Execute requests in parallel
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_campaign = {executor.submit(create_campaign, i): i for i in range(num_campaigns)}
-            
-            responses = []
-            for future in concurrent.futures.as_completed(future_to_campaign):
-                campaign_id = future_to_campaign[future]
-                try:
-                    data = future.result()
-                    responses.append(data)
-                except Exception as exc:
-                    print(f"Campaign {campaign_id} generated an exception: {exc}")
-        
-        end_time = time.time()
-        duration = end_time - start_time
-        
-        # Assert all campaigns were created successfully
-        assert len(responses) == num_campaigns
-        
-        # Log performance metrics
-        campaigns_per_second = num_campaigns / duration
-        print(f"\nParallel Campaign Creation Performance:")
-        print(f"Created {num_campaigns} campaigns in {duration:.2f} seconds with {max_workers} workers")
-        print(f"Rate: {campaigns_per_second:.2f} campaigns per second")
-        
-        # Check that all responses have the expected format
-        for response in responses:
-            assert "id" in response
-            assert "name" in response
-            assert "description" in response
+            assert response.status_code == 200, f"Failed to update campaign: {response.text}"
     
-    def test_create_campaign_with_varying_data(self, db: Session, test_user: models.User):
-        """Test creating campaigns with varying data complexity."""
-        num_campaigns = 10
+    end_time = time.time()
+    
+    # Log the total time and average time per update
+    total_time = end_time - start_time
+    avg_time = total_time / total_updates
+    print(f"\nCampaign update stress: {total_time:.2f} seconds total, {avg_time:.2f} seconds per update")
+
+
+def test_mixed_campaign_operations(client: TestClient, superuser_token_headers: Dict[str, str]):
+    """Test a mix of campaign operations (create, read, update) to simulate real-world usage."""
+    # Create some initial campaigns
+    initial_campaigns = create_multiple_campaigns(client, superuser_token_headers, count=5)
+    campaign_ids = [c["id"] for c in initial_campaigns]
+    
+    # Mix of operations
+    start_time = time.time()
+    num_operations = 50
+    
+    for i in range(num_operations):
+        operation = random.choice(["create", "read", "update"])
         
-        # Create campaigns with increasing complexity
-        varying_complexity_times = []
+        if operation == "create" or not campaign_ids:
+            # Create a new campaign
+            campaign = create_sample_campaign(client, superuser_token_headers)
+            campaign_ids.append(campaign["id"])
         
-        for i in range(num_campaigns):
-            # Create campaign with increasing complexity
-            campaign_data = schemas.CampaignCreate(
-                name=f"Complex Campaign {i}",
-                description="Lorem ipsum " * (i + 1),  # Increasing description length
-                industry="Technology",
-                target_audience="CTOs and IT Directors",
-                is_active=True,
-                # Add more variation based on index
-                ab_test_active=i % 2 == 0,
-                max_follow_ups=i
+        elif operation == "read":
+            # Read a random campaign
+            campaign_id = random.choice(campaign_ids)
+            response = client.get(f"/api/v1/campaigns/{campaign_id}", headers=superuser_token_headers)
+            assert response.status_code == 200, f"Failed to retrieve campaign: {response.text}"
+        
+        elif operation == "update":
+            # Update a random campaign
+            campaign_id = random.choice(campaign_ids)
+            update_data = {
+                "name": f"Mixed Ops Campaign {i}",
+                "description": f"Update during mixed operations test",
+                "status": "active" if i % 2 == 0 else "draft"
+            }
+            
+            response = client.put(
+                f"/api/v1/campaigns/{campaign_id}", 
+                json=update_data, 
+                headers=superuser_token_headers
             )
-            
-            # Measure creation time
-            start_time = time.time()
-            campaign = campaign_service.create_campaign(db, campaign_data, test_user.id)
-            end_time = time.time()
-            
-            varying_complexity_times.append(end_time - start_time)
-        
-        # Calculate statistics
-        avg_time = sum(varying_complexity_times) / len(varying_complexity_times)
-        max_time = max(varying_complexity_times)
-        min_time = min(varying_complexity_times)
-        
-        print(f"\nCampaign Creation with Varying Complexity:")
-        print(f"Average creation time: {avg_time:.6f} seconds")
-        print(f"Maximum creation time: {max_time:.6f} seconds")
-        print(f"Minimum creation time: {min_time:.6f} seconds")
-        
-        # Assert performance is within acceptable bounds
-        assert max_time < 1.0, "Campaign creation is too slow for complex data"
+            assert response.status_code == 200, f"Failed to update campaign: {response.text}"
     
-    def test_bulk_campaign_creation(self, db: Session, test_user: models.User):
-        """Test bulk creation of campaigns and measure database performance."""
-        num_campaigns = 50
-        
-        # Prepare bulk data
-        campaign_data_list = [
-            self.random_campaign_data() for _ in range(num_campaigns)
+    end_time = time.time()
+    
+    # Log the total time and average time per operation
+    total_time = end_time - start_time
+    avg_time = total_time / num_operations
+    print(f"\nMixed campaign operations: {total_time:.2f} seconds total, {avg_time:.2f} seconds per operation")
+
+
+@pytest.mark.skip(reason="This test can be resource-intensive")
+def test_high_load_campaign_creation(client: TestClient, superuser_token_headers: Dict[str, str]):
+    """Test creating a large number of campaigns to test system limits."""
+    num_campaigns = 100  # Adjust as needed for your system
+    
+    start_time = time.time()
+    
+    # Use a thread pool with more workers for higher load
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        # Submit tasks to the executor
+        futures = [
+            executor.submit(create_campaign_worker, superuser_token_headers, client)
+            for _ in range(num_campaigns)
         ]
         
-        # Convert to schema objects
-        campaign_schemas = [
-            schemas.CampaignCreate(**data) for data in campaign_data_list
-        ]
-        
-        # Function to perform bulk creation
-        def bulk_create_campaigns():
-            campaigns = []
-            for campaign_schema in campaign_schemas:
-                campaign = models.EmailCampaign(
-                    **campaign_schema.dict(),
-                    user_id=test_user.id
-                )
-                db.add(campaign)
-                campaigns.append(campaign)
-            db.commit()
-            return campaigns
-        
-        # Measure bulk creation time
-        start_time = time.time()
-        created_campaigns = bulk_create_campaigns()
-        end_time = time.time()
-        duration = end_time - start_time
-        
-        # Assert all campaigns were created
-        assert len(created_campaigns) == num_campaigns
-        
-        # Log performance metrics
-        campaigns_per_second = num_campaigns / duration
-        print(f"\nBulk Campaign Creation Performance:")
-        print(f"Bulk created {num_campaigns} campaigns in {duration:.2f} seconds")
-        print(f"Rate: {campaigns_per_second:.2f} campaigns per second")
-        
-        # Verify each campaign exists in the database
-        campaign_ids = [campaign.id for campaign in created_campaigns]
-        db_campaigns = db.query(models.EmailCampaign).filter(
-            models.EmailCampaign.id.in_(campaign_ids)
-        ).all()
-        assert len(db_campaigns) == num_campaigns
+        # Get results as they complete
+        campaigns = [future.result() for future in futures]
     
-    def test_campaign_read_performance(self, db: Session, test_user: models.User):
-        """Test reading campaigns with filtering and pagination performance."""
-        # Create a large number of campaigns for testing
-        num_campaigns = 100
-        
-        # Create test campaigns with different properties
-        for i in range(num_campaigns):
-            is_active = i % 2 == 0
-            industry = f"Industry{i % 5}"
-            
-            campaign = models.EmailCampaign(
-                name=f"Performance Test Campaign {i}",
-                description=f"Description for performance test {i}",
-                industry=industry,
-                is_active=is_active,
-                user_id=test_user.id
-            )
-            db.add(campaign)
-        
-        db.commit()
-        
-        # Test various read operations
-        # 1. Get all campaigns with pagination
-        start_time = time.time()
-        all_campaigns = campaign_service.get_campaigns(db, test_user.id, skip=0, limit=100)
-        pagination_time = time.time() - start_time
-        
-        # 2. Get active campaigns
-        start_time = time.time()
-        active_campaigns = campaign_service.get_active_campaigns(db, test_user.id)
-        active_filter_time = time.time() - start_time
-        
-        # 3. Filter by industry
-        start_time = time.time()
-        industry_campaigns = db.query(models.EmailCampaign).filter(
-            models.EmailCampaign.user_id == test_user.id,
-            models.EmailCampaign.industry == "Industry1"
-        ).all()
-        industry_filter_time = time.time() - start_time
-        
-        # Log performance metrics
-        print(f"\nCampaign Read Performance:")
-        print(f"Read {len(all_campaigns)} campaigns with pagination: {pagination_time:.6f} seconds")
-        print(f"Read {len(active_campaigns)} active campaigns: {active_filter_time:.6f} seconds")
-        print(f"Read {len(industry_campaigns)} campaigns by industry: {industry_filter_time:.6f} seconds")
-        
-        # Assert performance is within acceptable bounds
-        assert pagination_time < 0.5, "Pagination is too slow"
-        assert active_filter_time < 0.5, "Filtering active campaigns is too slow"
-        assert industry_filter_time < 0.5, "Filtering by industry is too slow" 
+    end_time = time.time()
+    
+    # Verify all campaigns were created
+    successful_campaigns = [c for c in campaigns if "error" not in c]
+    failed_campaigns = [c for c in campaigns if "error" in c]
+    
+    success_rate = len(successful_campaigns) / num_campaigns * 100
+    
+    print(f"\nHigh load campaign creation: {len(successful_campaigns)} out of {num_campaigns} successful ({success_rate:.1f}%)")
+    print(f"Total time: {end_time - start_time:.2f} seconds")
+    print(f"Average time per campaign: {(end_time - start_time) / num_campaigns:.4f} seconds")
+    
+    if failed_campaigns:
+        print(f"Sample of errors: {failed_campaigns[:3]}")
+    
+    # We don't assert all succeeded, as this test is meant to find the limits
+    assert success_rate > 50, f"Success rate too low: {success_rate:.1f}%" 

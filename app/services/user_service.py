@@ -7,7 +7,7 @@ separating it from data access operations in the crud modules.
 
 import logging
 import re
-from typing import Dict, Optional, Any, Tuple
+from typing import Dict, Optional, Any, Tuple, List
 from uuid import UUID
 from datetime import datetime, timedelta
 
@@ -16,7 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy.orm import Session
 from jose import JWTError
 
-from app import models, schemas
+from app import models, schemas, crud
 from app.core.config import settings
 from app.core.security import (
     get_password_hash, 
@@ -57,10 +57,29 @@ def get_user(db: Session, user_id: UUID) -> Optional[models.User]:
         User object or None if not found
     """
     try:
-        return db.query(models.User).filter(models.User.id == user_id).first()
+        return crud.user.get(db, id=user_id)
     except SQLAlchemyError as e:
         logger.error(f"Error retrieving user {user_id}: {str(e)}")
         handle_db_error(e, "retrieve", "user")
+
+
+def get_users(db: Session, skip: int = 0, limit: int = 100) -> List[models.User]:
+    """
+    Get multiple users with pagination.
+    
+    Args:
+        db: Database session
+        skip: Number of records to skip
+        limit: Maximum number of records to return
+        
+    Returns:
+        List of User objects
+    """
+    try:
+        return crud.user.get_multi(db, skip=skip, limit=limit)
+    except SQLAlchemyError as e:
+        logger.error(f"Error retrieving users: {str(e)}")
+        handle_db_error(e, "retrieve", "users")
 
 
 def get_user_by_email(db: Session, email: str) -> Optional[models.User]:
@@ -75,7 +94,7 @@ def get_user_by_email(db: Session, email: str) -> Optional[models.User]:
         User object or None if not found
     """
     try:
-        return db.query(models.User).filter(models.User.email == email).first()
+        return crud.user.get_by_email(db, email=email)
     except SQLAlchemyError as e:
         logger.error(f"Error retrieving user by email {email}: {str(e)}")
         handle_db_error(e, "retrieve", "user")

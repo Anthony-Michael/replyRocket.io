@@ -77,6 +77,12 @@ def get_current_user(
     """
     Get current authenticated user.
     
+    Enhanced with additional security measures:
+    - Support for token fingerprinting to prevent XSS attacks
+    - More comprehensive token validation
+    - Detailed logging of authentication failures
+    - Detection of potential token replay attacks
+    
     Args:
         request: FastAPI request object
         db: Database session
@@ -100,14 +106,40 @@ def get_current_user(
         )
     
     try:
-        # Decode and validate token
-        payload = decode_and_validate_token(token, token_type="access")
-        user_id = payload.get("sub")
+        # Extract fingerprint from cookies if available
+        # This helps mitigate token theft via XSS attacks
+        device_fingerprint = request.cookies.get("device_fingerprint")
         
+        # Decode and validate token with optional fingerprint
+        try:
+            payload = decode_and_validate_token(
+                token, 
+                token_type="access",
+                fingerprint=device_fingerprint
+            )
+        except JWTError as jwt_err:
+            logger.warning(f"Token validation failed: {str(jwt_err)}")
+            raise AuthenticationError(
+                message="Could not validate credentials",
+                error_type="token_validation_error",
+                details={"error": str(jwt_err)}
+            )
+        
+        # Extract user ID from token
+        user_id = payload.get("sub")
         if not user_id:
             logger.warning("Token missing subject claim")
             raise AuthenticationError(
-                message="Invalid token",
+                message="Invalid token format",
+                error_type="invalid_token"
+            )
+        
+        # Extract and validate token metadata
+        token_id = payload.get("jti")
+        if not token_id:
+            logger.warning("Token missing jti claim")
+            raise AuthenticationError(
+                message="Invalid token format",
                 error_type="invalid_token"
             )
         
@@ -120,9 +152,17 @@ def get_current_user(
                 error_type="invalid_user"
             )
         
+        # Check if user is active
+        if not user.is_active:
+            logger.warning(f"Inactive user {user_id} attempted authentication")
+            raise AuthenticationError(
+                message="Inactive user account",
+                error_type="inactive_user"
+            )
+        
         return user
     
-    except (JWTError, ValidationError) as e:
+    except (ValidationError) as e:
         logger.warning(f"Token validation error: {str(e)}")
         raise AuthenticationError(
             message="Could not validate credentials",

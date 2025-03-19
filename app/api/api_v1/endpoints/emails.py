@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app import crud, models, schemas
+from app import models, schemas
 from app.api import deps
 from app.services import email_service, campaign_service
 from app.services.ai_email_generator_service import generate_email
@@ -176,10 +176,16 @@ def track_email_open(
         Tracking pixel image
     """
     try:
+        # Use the email service to track the email open
         email = email_service.track_email_open(db, tracking_id)
         
+        # If email was found and has a campaign, update campaign stats
         if email and email.campaign_id:
-            update_campaign_open_stats(db, email)
+            campaign_service.update_campaign_stats(
+                db=db,
+                campaign_id=email.campaign_id,
+                stats={"opened_emails": email.campaign.opened_emails + 1},
+            )
         
         # Return a 1x1 transparent pixel
         return "Tracking pixel"
@@ -196,9 +202,9 @@ def update_campaign_open_stats(db: Session, email: models.Email) -> None:
         email: The email that was opened
     """
     if not email.is_opened:  # Only update if first open
-        campaign = crud.campaign.get(db, id=email.campaign_id)
+        campaign = campaign_service.get_campaign(db, email.campaign_id)
         if campaign:
-            campaign_service.update_campaign_statistics(
+            campaign_service.update_campaign_stats(
                 db=db,
                 campaign_id=campaign.id,
                 stats={"opened_emails": campaign.opened_emails + 1},
@@ -228,7 +234,7 @@ def get_email_metrics(
             - 404 if email not found
             - 403 if user doesn't have permission
     """
-    email = crud.email.get(db, id=email_id)
+    email = email_service.get_email(db, email_id)
     if not email:
         handle_entity_not_found("email", email_id)
     
@@ -255,7 +261,7 @@ def validate_email_campaign_ownership(
     Raises:
         HTTPException: 403 if user doesn't have permission
     """
-    campaign = crud.campaign.get(db, id=email.campaign_id)
+    campaign = campaign_service.get_campaign(db, email.campaign_id)
     if not campaign or campaign.user_id != user_id:
         handle_permission_error("email", email.id, user_id)
 
@@ -290,8 +296,8 @@ def get_campaign_emails(
     # Validate campaign access and ownership
     validate_campaign_access(db, campaign_id, current_user.id)
     
-    # Get emails for the campaign
-    emails = crud.email.get_emails_by_campaign(
+    # Get emails for the campaign using the service layer
+    emails = email_service.get_emails_by_campaign(
         db=db, campaign_id=campaign_id, skip=skip, limit=limit
     )
     

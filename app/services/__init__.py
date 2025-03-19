@@ -43,9 +43,11 @@ from app.services.email_service import (
 from app.services.email_sender_service import send_email
 from app.services.ai_email_generator_service import generate_email, generate_follow_up
 
-# Import new service modules
+# Import service modules
 from app.services import campaign_service
 from app.services import email_service
 from app.services import user_service
+from app.services import stats_service
+from app.services import follow_up_service
 
 # Services package for AI email generation and email sending 

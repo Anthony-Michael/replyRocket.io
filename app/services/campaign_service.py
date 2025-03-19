@@ -9,10 +9,11 @@ import logging
 from typing import Dict, List, Optional, Any
 from uuid import UUID
 
+from fastapi import HTTPException, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app import models, schemas
+from app import models, schemas, crud
 from app.utils.error_handling import handle_db_error
 
 # Set up logger
@@ -32,14 +33,8 @@ def create_campaign(db: Session, campaign_in: schemas.CampaignCreate, user_id: U
         New EmailCampaign object
     """
     try:
-        # Create campaign object
-        obj_in_data = campaign_in.dict()
-        db_obj = models.EmailCampaign(**obj_in_data, user_id=user_id)
-        
-        # Add to database
-        db.add(db_obj)
-        db.commit()
-        db.refresh(db_obj)
+        # Use CRUD operation to create campaign
+        db_obj = crud.campaign.create_with_owner(db, obj_in=campaign_in, user_id=user_id)
         
         logger.info(f"Created campaign {db_obj.id} for user {user_id}")
         return db_obj
@@ -60,7 +55,7 @@ def get_campaign(db: Session, campaign_id: UUID) -> Optional[models.EmailCampaig
         EmailCampaign object or None if not found
     """
     try:
-        return db.query(models.EmailCampaign).filter(models.EmailCampaign.id == campaign_id).first()
+        return crud.campaign.get(db, id=campaign_id)
     except SQLAlchemyError as e:
         logger.error(f"Error retrieving campaign {campaign_id}: {str(e)}")
         handle_db_error(e)
@@ -82,13 +77,7 @@ def get_campaigns(
         List of EmailCampaign objects
     """
     try:
-        return (
-            db.query(models.EmailCampaign)
-            .filter(models.EmailCampaign.user_id == user_id)
-            .offset(skip)
-            .limit(limit)
-            .all()
-        )
+        return crud.campaign.get_multi_by_owner(db, user_id=user_id, skip=skip, limit=limit)
     except SQLAlchemyError as e:
         logger.error(f"Error retrieving campaigns for user {user_id}: {str(e)}")
         handle_db_error(e)
@@ -106,11 +95,7 @@ def get_active_campaigns(db: Session, user_id: UUID) -> List[models.EmailCampaig
         List of active EmailCampaign objects
     """
     try:
-        return (
-            db.query(models.EmailCampaign)
-            .filter(models.EmailCampaign.user_id == user_id, models.EmailCampaign.is_active == True)
-            .all()
-        )
+        return crud.campaign.get_active_by_owner(db, user_id=user_id)
     except SQLAlchemyError as e:
         logger.error(f"Error retrieving active campaigns for user {user_id}: {str(e)}")
         handle_db_error(e)
@@ -140,18 +125,11 @@ def update_campaign(
                 detail="Campaign not found",
             )
         
-        # Update fields
-        update_data = campaign_in.dict(exclude_unset=True)
-        for field in update_data:
-            setattr(db_obj, field, update_data[field])
-        
-        # Save to database
-        db.add(db_obj)
-        db.commit()
-        db.refresh(db_obj)
+        # Use CRUD operation to update campaign
+        updated_campaign = crud.campaign.update(db, db_obj=db_obj, obj_in=campaign_in)
         
         logger.info(f"Updated campaign {campaign_id}")
-        return db_obj
+        return updated_campaign
     except SQLAlchemyError as e:
         logger.error(f"Error updating campaign {campaign_id}: {str(e)}")
         handle_db_error(e)
@@ -178,12 +156,11 @@ def delete_campaign(db: Session, campaign_id: UUID) -> models.EmailCampaign:
                 detail="Campaign not found",
             )
         
-        # Delete from database
-        db.delete(db_obj)
-        db.commit()
+        # Use CRUD operation to delete campaign
+        deleted_campaign = crud.campaign.remove(db, id=campaign_id)
         
         logger.info(f"Deleted campaign {campaign_id}")
-        return db_obj
+        return deleted_campaign
     except SQLAlchemyError as e:
         logger.error(f"Error deleting campaign {campaign_id}: {str(e)}")
         handle_db_error(e)
@@ -212,16 +189,11 @@ def update_campaign_stats(
                 detail="Campaign not found",
             )
             
-        for key, value in stats.items():
-            if hasattr(campaign, key):
-                setattr(campaign, key, value)
-        
-        db.add(campaign)
-        db.commit()
-        db.refresh(campaign)
+        # Use CRUD operation to update stats
+        updated_campaign = crud.campaign.update_stats(db, db_obj=campaign, stats=stats)
         
         logger.info(f"Updated stats for campaign {campaign_id}")
-        return campaign
+        return updated_campaign
     except SQLAlchemyError as e:
         logger.error(f"Error updating stats for campaign {campaign_id}: {str(e)}")
         handle_db_error(e)
@@ -250,15 +222,11 @@ def configure_ab_testing(
                 detail="Campaign not found",
             )
             
-        campaign.ab_test_active = True
-        campaign.ab_test_variants = variants
-        
-        db.add(campaign)
-        db.commit()
-        db.refresh(campaign)
+        # Use CRUD operation to update A/B testing configuration
+        updated_campaign = crud.campaign.update_ab_testing(db, db_obj=campaign, variants=variants)
         
         logger.info(f"Configured A/B testing for campaign {campaign_id}")
-        return campaign
+        return updated_campaign
     except SQLAlchemyError as e:
         logger.error(f"Error configuring A/B testing for campaign {campaign_id}: {str(e)}")
         handle_db_error(e) 

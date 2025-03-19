@@ -8,28 +8,24 @@ from sqlalchemy.orm import Session
 
 from app.crud.base import CRUDBase
 from app.models.email import Email
-from app.schemas.email import EmailSendRequest
+from app.schemas.email import EmailCreate, EmailUpdate
 from app.models.campaign import EmailCampaign
 
 
-class CRUDEmail(CRUDBase[Email, EmailSendRequest, Any]):
-    def create_email(
-        self, db: Session, *, obj_in: EmailSendRequest, campaign_id: UUID
+class CRUDEmail(CRUDBase[Email, EmailCreate, EmailUpdate]):
+    def create_with_tracking(
+        self, db: Session, *, obj_in: dict, campaign_id: UUID, tracking_id: str = None
     ) -> Email:
         """
-        Create a new email.
+        Create a new email with tracking ID. Pure database operation.
         """
-        tracking_id = secrets.token_urlsafe(16)
-        
+        if not tracking_id:
+            tracking_id = secrets.token_urlsafe(16)
+            
         db_obj = Email(
             campaign_id=campaign_id,
-            recipient_email=obj_in.recipient_email,
-            recipient_name=obj_in.recipient_name,
-            subject=obj_in.subject,
-            body_text=obj_in.body_text,
-            body_html=obj_in.body_html,
-            ab_test_variant=obj_in.ab_test_variant,
             tracking_id=tracking_id,
+            **obj_in
         )
         
         db.add(db_obj)
@@ -37,69 +33,70 @@ class CRUDEmail(CRUDBase[Email, EmailSendRequest, Any]):
         db.refresh(db_obj)
         return db_obj
     
-    def mark_as_sent(self, db: Session, *, email_id: UUID) -> Email:
+    def update_sent_status(self, db: Session, *, db_obj: Email, is_sent: bool = True) -> Email:
         """
-        Mark an email as sent.
+        Update email sent status. Pure database operation.
         """
-        email = self.get(db, id=email_id)
-        email.is_sent = True
-        email.sent_at = datetime.utcnow()
+        db_obj.is_sent = is_sent
+        if is_sent:
+            db_obj.sent_at = datetime.utcnow()
         
-        db.add(email)
+        db.add(db_obj)
         db.commit()
-        db.refresh(email)
-        return email
+        db.refresh(db_obj)
+        return db_obj
     
-    def mark_as_opened(self, db: Session, *, tracking_id: str) -> Optional[Email]:
+    def update_opened_status(self, db: Session, *, db_obj: Email, is_opened: bool = True) -> Email:
         """
-        Mark an email as opened.
+        Update email opened status. Pure database operation.
         """
-        email = db.query(Email).filter(Email.tracking_id == tracking_id).first()
-        if not email:
-            return None
+        db_obj.is_opened = is_opened
+        if is_opened and not db_obj.opened_at:  # Only record first open time
+            db_obj.opened_at = datetime.utcnow()
         
-        email.is_opened = True
-        if not email.opened_at:  # Only record first open time
-            email.opened_at = datetime.utcnow()
+        db_obj.num_opens += 1
         
-        email.num_opens += 1
-        
-        db.add(email)
+        db.add(db_obj)
         db.commit()
-        db.refresh(email)
-        return email
+        db.refresh(db_obj)
+        return db_obj
     
-    def mark_as_replied(self, db: Session, *, email_id: UUID) -> Email:
+    def update_replied_status(self, db: Session, *, db_obj: Email, is_replied: bool = True) -> Email:
         """
-        Mark an email as replied.
+        Update email replied status. Pure database operation.
         """
-        email = self.get(db, id=email_id)
-        email.is_replied = True
-        email.replied_at = datetime.utcnow()
+        db_obj.is_replied = is_replied
+        if is_replied:
+            db_obj.replied_at = datetime.utcnow()
         
-        db.add(email)
+        db.add(db_obj)
         db.commit()
-        db.refresh(email)
-        return email
+        db.refresh(db_obj)
+        return db_obj
     
-    def mark_as_converted(self, db: Session, *, email_id: UUID) -> Email:
+    def update_converted_status(self, db: Session, *, db_obj: Email, is_converted: bool = True) -> Email:
         """
-        Mark an email as converted.
+        Update email converted status. Pure database operation.
         """
-        email = self.get(db, id=email_id)
-        email.is_converted = True
-        email.converted_at = datetime.utcnow()
+        db_obj.is_converted = is_converted
+        if is_converted:
+            db_obj.converted_at = datetime.utcnow()
         
-        db.add(email)
+        db.add(db_obj)
         db.commit()
-        db.refresh(email)
-        return email
+        db.refresh(db_obj)
+        return db_obj
     
-    def get_pending_follow_ups(self, db: Session) -> List[Email]:
+    def get_by_tracking_id(self, db: Session, *, tracking_id: str) -> Optional[Email]:
         """
-        Get all emails that need follow-ups.
+        Get email by tracking ID. Pure database operation.
         """
-        # Emails that are sent but not replied, and their campaign allows follow-ups
+        return db.query(Email).filter(Email.tracking_id == tracking_id).first()
+    
+    def get_pending_follow_up_candidates(self, db: Session) -> List[Email]:
+        """
+        Get all emails that are candidates for follow-ups. Pure database operation.
+        """
         return (
             db.query(Email)
             .join(EmailCampaign, Email.campaign_id == EmailCampaign.id)
@@ -114,39 +111,11 @@ class CRUDEmail(CRUDBase[Email, EmailSendRequest, Any]):
             .all()
         )
     
-    def create_follow_up(
-        self, db: Session, *, original_email_id: UUID, subject: str, body_text: str, body_html: str
-    ) -> Email:
-        """
-        Create a follow-up email.
-        """
-        original_email = self.get(db, id=original_email_id)
-        
-        follow_up = Email(
-            campaign_id=original_email.campaign_id,
-            recipient_email=original_email.recipient_email,
-            recipient_name=original_email.recipient_name,
-            recipient_company=original_email.recipient_company,
-            recipient_job_title=original_email.recipient_job_title,
-            subject=subject,
-            body_text=body_text,
-            body_html=body_html,
-            is_follow_up=True,
-            follow_up_number=original_email.follow_up_number + 1,
-            original_email_id=original_email_id,
-            tracking_id=secrets.token_urlsafe(16),
-        )
-        
-        db.add(follow_up)
-        db.commit()
-        db.refresh(follow_up)
-        return follow_up
-    
-    def get_emails_by_campaign(
+    def get_multi_by_campaign(
         self, db: Session, *, campaign_id: UUID, skip: int = 0, limit: int = 100
     ) -> List[Email]:
         """
-        Get emails by campaign ID.
+        Get emails by campaign ID. Pure database operation.
         """
         return (
             db.query(Email)

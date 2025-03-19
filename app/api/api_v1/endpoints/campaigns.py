@@ -13,15 +13,7 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.api import deps
-from app.services import (
-    create_campaign,
-    get_campaign,
-    get_campaigns,
-    get_active_campaigns,
-    update_campaign,
-    delete_campaign,
-    configure_ab_testing
-)
+from app.services import campaign_service
 from app.utils.validation import validate_campaign_access
 
 # Set up logger
@@ -41,7 +33,7 @@ def create_campaign_endpoint(
     Create new campaign.
     """
     logger.info(f"Creating new campaign for user {current_user.id}")
-    return create_campaign(db, campaign_in, current_user.id)
+    return campaign_service.create_campaign(db, campaign_in, current_user.id)
 
 
 @router.get("/", response_model=List[schemas.Campaign])
@@ -56,7 +48,7 @@ def read_campaigns(
     Retrieve campaigns.
     """
     logger.info(f"Retrieving campaigns for user {current_user.id}")
-    return get_campaigns(db, current_user.id, skip=skip, limit=limit)
+    return campaign_service.get_campaigns(db, current_user.id, skip=skip, limit=limit)
 
 
 @router.get("/active", response_model=List[schemas.Campaign])
@@ -69,7 +61,7 @@ def read_active_campaigns(
     Retrieve active campaigns.
     """
     logger.info(f"Retrieving active campaigns for user {current_user.id}")
-    return get_active_campaigns(db, current_user.id)
+    return campaign_service.get_active_campaigns(db, current_user.id)
 
 
 @router.get("/{campaign_id}", response_model=schemas.Campaign)
@@ -83,7 +75,7 @@ def read_campaign(
     Get campaign by ID.
     """
     logger.info(f"Retrieving campaign {campaign_id} for user {current_user.id}")
-    campaign = get_campaign(db, campaign_id)
+    campaign = campaign_service.get_campaign(db, campaign_id)
     
     if not campaign:
         raise HTTPException(
@@ -92,7 +84,7 @@ def read_campaign(
         )
         
     # Validate access
-    validate_campaign_access(campaign, current_user)
+    validate_campaign_access(db, campaign.id, current_user.id)
     
     return campaign
 
@@ -109,7 +101,7 @@ def update_campaign_endpoint(
     Update a campaign.
     """
     logger.info(f"Updating campaign {campaign_id} for user {current_user.id}")
-    campaign = get_campaign(db, campaign_id)
+    campaign = campaign_service.get_campaign(db, campaign_id)
     
     if not campaign:
         raise HTTPException(
@@ -118,9 +110,9 @@ def update_campaign_endpoint(
         )
         
     # Validate access
-    validate_campaign_access(campaign, current_user)
+    validate_campaign_access(db, campaign.id, current_user.id)
     
-    return update_campaign(db, campaign_id, campaign_in)
+    return campaign_service.update_campaign(db, campaign_id, campaign_in)
 
 
 @router.delete("/{campaign_id}", response_model=schemas.Campaign)
@@ -134,7 +126,7 @@ def delete_campaign_endpoint(
     Delete a campaign.
     """
     logger.info(f"Deleting campaign {campaign_id} for user {current_user.id}")
-    campaign = get_campaign(db, campaign_id)
+    campaign = campaign_service.get_campaign(db, campaign_id)
     
     if not campaign:
         raise HTTPException(
@@ -143,9 +135,9 @@ def delete_campaign_endpoint(
         )
         
     # Validate access
-    validate_campaign_access(campaign, current_user)
+    validate_campaign_access(db, campaign.id, current_user.id)
     
-    return delete_campaign(db, campaign_id)
+    return campaign_service.delete_campaign(db, campaign_id)
 
 
 @router.post("/{campaign_id}/ab-testing", response_model=schemas.Campaign)
@@ -160,7 +152,7 @@ def configure_ab_testing_endpoint(
     Configure A/B testing for a campaign.
     """
     logger.info(f"Configuring A/B testing for campaign {campaign_id}")
-    campaign = get_campaign(db, campaign_id)
+    campaign = campaign_service.get_campaign(db, campaign_id)
     
     if not campaign:
         raise HTTPException(
@@ -169,7 +161,7 @@ def configure_ab_testing_endpoint(
         )
         
     # Validate access
-    validate_campaign_access(campaign, current_user)
+    validate_campaign_access(db, campaign.id, current_user.id)
     
     # Validate A/B test configuration
     if len(ab_test_in.variants) < 2:
@@ -178,4 +170,4 @@ def configure_ab_testing_endpoint(
             detail="A/B testing requires at least two variants",
         )
     
-    return configure_ab_testing(db, campaign_id, ab_test_in.variants) 
+    return campaign_service.configure_ab_testing(db, campaign_id, ab_test_in.variants) 

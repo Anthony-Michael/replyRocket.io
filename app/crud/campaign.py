@@ -9,24 +9,23 @@ from app.schemas.campaign import CampaignCreate, CampaignUpdate
 
 
 class CRUDCampaign(CRUDBase[EmailCampaign, CampaignCreate, CampaignUpdate]):
-    def create_with_user(
+    def create_with_owner(
         self, db: Session, *, obj_in: CampaignCreate, user_id: UUID
     ) -> EmailCampaign:
         """
-        Create a new campaign with user ID.
+        Create a new campaign with owner ID. Pure database operation.
         """
-        obj_in_data = obj_in.dict()
-        db_obj = EmailCampaign(**obj_in_data, user_id=user_id)
+        db_obj = EmailCampaign(**obj_in.dict(), user_id=user_id)
         db.add(db_obj)
         db.commit()
         db.refresh(db_obj)
         return db_obj
 
-    def get_multi_by_user(
+    def get_multi_by_owner(
         self, db: Session, *, user_id: UUID, skip: int = 0, limit: int = 100
     ) -> List[EmailCampaign]:
         """
-        Get multiple campaigns by user ID.
+        Get multiple campaigns by owner ID. Pure database operation.
         """
         return (
             db.query(self.model)
@@ -36,11 +35,11 @@ class CRUDCampaign(CRUDBase[EmailCampaign, CampaignCreate, CampaignUpdate]):
             .all()
         )
     
-    def get_active_campaigns_for_user(
+    def get_active_by_owner(
         self, db: Session, *, user_id: UUID
     ) -> List[EmailCampaign]:
         """
-        Get all active campaigns for a user.
+        Get all active campaigns for a user. Pure database operation.
         """
         return (
             db.query(self.model)
@@ -48,36 +47,34 @@ class CRUDCampaign(CRUDBase[EmailCampaign, CampaignCreate, CampaignUpdate]):
             .all()
         )
     
-    def update_campaign_stats(
-        self, db: Session, *, campaign_id: UUID, stats: Dict[str, int]
+    def update_stats(
+        self, db: Session, *, db_obj: EmailCampaign, stats: Dict[str, int]
     ) -> EmailCampaign:
         """
-        Update campaign statistics.
+        Update campaign statistics. Pure database operation.
         """
-        campaign = self.get(db, id=campaign_id)
         for key, value in stats.items():
-            if hasattr(campaign, key):
-                setattr(campaign, key, value)
+            if hasattr(db_obj, key):
+                setattr(db_obj, key, value)
         
-        db.add(campaign)
+        db.add(db_obj)
         db.commit()
-        db.refresh(campaign)
-        return campaign
+        db.refresh(db_obj)
+        return db_obj
     
-    def configure_ab_testing(
-        self, db: Session, *, campaign_id: UUID, variants: Dict[str, str]
+    def update_ab_testing(
+        self, db: Session, *, db_obj: EmailCampaign, variants: Dict[str, str]
     ) -> EmailCampaign:
         """
-        Configure A/B testing for a campaign.
+        Update A/B testing configuration. Pure database operation.
         """
-        campaign = self.get(db, id=campaign_id)
-        campaign.ab_test_active = True
-        campaign.ab_test_variants = variants
+        db_obj.ab_test_active = True
+        db_obj.ab_test_variants = variants
         
-        db.add(campaign)
+        db.add(db_obj)
         db.commit()
-        db.refresh(campaign)
-        return campaign
+        db.refresh(db_obj)
+        return db_obj
 
 
 campaign = CRUDCampaign(EmailCampaign) 

@@ -1,55 +1,50 @@
 """
 Unit tests for the AI email generator service.
 
-This module contains tests for ai_email_generator_service.py,
-mocking the OpenAI API calls to test email generation logic.
+This module tests the AI email generator service with mocked OpenAI API calls.
 """
 
 import pytest
 import json
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch, Mock, MagicMock
 import os
 
 from app.services.ai_email_generator_service import (
     generate_email,
-    generate_follow_up,
-    generate_ab_test_variants,
     build_email_prompt,
-    parse_ai_response,
-    format_email_html
+    call_openai_api,
+    parse_email_response,
+    generate_follow_up,
+    build_follow_up_prompt,
+    generate_ab_test_variants
 )
 from app.schemas.email import EmailGenResponse
 
 
 @pytest.fixture
-def mock_openai_client():
-    """Create a mock OpenAI client."""
-    with patch('app.services.ai_email_generator_service.client') as mock_client:
-        yield mock_client
-
-
-@pytest.fixture
 def mock_openai_response():
     """Create a mock OpenAI API response."""
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock()]
-    mock_response.choices[0].message = MagicMock()
-    mock_response.choices[0].message.content = json.dumps({
-        "subject": "Test Email Subject",
-        "body_text": "This is a test email body in plain text.",
-        "body_html": "<p>This is a test email body in HTML.</p>"
+    mock_response = Mock()
+    mock_message = Mock()
+    mock_message.content = json.dumps({
+        "subject": "Test Subject Line",
+        "body_text": "This is a test plain text email body.",
+        "body_html": "<p>This is a test HTML email body.</p>"
     })
+    mock_choice = Mock()
+    mock_choice.message = mock_message
+    mock_response.choices = [mock_choice]
     return mock_response
 
 
 @pytest.fixture
-def email_generation_params():
-    """Create parameters for email generation."""
+def email_gen_params():
+    """Provide standard parameters for email generation tests."""
     return {
         "recipient_name": "John Doe",
         "industry": "Technology",
-        "pain_points": ["Time management", "Team collaboration"],
-        "recipient_company": "Acme Inc",
+        "pain_points": ["Managing remote teams", "Tracking project progress"],
+        "recipient_company": "Tech Solutions Inc.",
         "recipient_job_title": "CTO",
         "personalization_notes": "Met at TechConf 2023"
     }
@@ -57,321 +52,450 @@ def email_generation_params():
 
 @pytest.fixture
 def follow_up_params():
-    """Create parameters for follow-up email generation."""
+    """Provide standard parameters for follow-up email generation tests."""
     return {
-        "original_subject": "Original Subject",
-        "original_body": "This is the original email body.",
+        "original_subject": "Regarding your project management challenges",
+        "original_body": "Hi John, I noticed your company might be facing challenges with project management...",
         "recipient_name": "John Doe",
         "follow_up_number": 1,
-        "recipient_company": "Acme Inc",
+        "recipient_company": "Tech Solutions Inc.",
         "recipient_job_title": "CTO",
-        "new_approach": "Focus on cost savings"
+        "new_approach": "Focus on ROI benefits"
     }
-
-
-@pytest.fixture
-def ab_test_params():
-    """Create parameters for A/B test variant generation."""
-    return {
-        "recipient_name": "John Doe",
-        "industry": "Technology",
-        "pain_points": ["Time management", "Team collaboration"],
-        "variants": {
-            "A": "Value proposition focused",
-            "B": "Problem-solution focused"
-        },
-        "recipient_company": "Acme Inc",
-        "recipient_job_title": "CTO"
-    }
-
-
-class TestGenerateEmail:
-    """Tests for generate_email function."""
-
-    def test_generate_email_success(self, mock_openai_client, mock_openai_response, email_generation_params):
-        """Test successful email generation."""
-        # Arrange
-        mock_openai_client.chat.completions.create.return_value = mock_openai_response
-        
-        # Act
-        result = generate_email(**email_generation_params)
-        
-        # Assert
-        assert isinstance(result, EmailGenResponse)
-        assert result.subject == "Test Email Subject"
-        assert result.body_text == "This is a test email body in plain text."
-        assert result.body_html == "<p>This is a test email body in HTML.</p>"
-        mock_openai_client.chat.completions.create.assert_called_once()
-
-    def test_generate_email_minimal_params(self, mock_openai_client, mock_openai_response):
-        """Test email generation with minimal required parameters."""
-        # Arrange
-        mock_openai_client.chat.completions.create.return_value = mock_openai_response
-        
-        # Act
-        result = generate_email(
-            recipient_name="John Doe",
-            industry="Technology",
-            pain_points=["Time management"]
-        )
-        
-        # Assert
-        assert isinstance(result, EmailGenResponse)
-        assert result.subject == "Test Email Subject"
-        mock_openai_client.chat.completions.create.assert_called_once()
-
-    @patch('app.services.ai_email_generator_service.logger')
-    def test_generate_email_openai_error(self, mock_logger, mock_openai_client, email_generation_params):
-        """Test error handling when OpenAI API call fails."""
-        # Arrange
-        mock_openai_client.chat.completions.create.side_effect = Exception("API Error")
-        
-        # Act & Assert
-        with pytest.raises(Exception) as exc_info:
-            generate_email(**email_generation_params)
-        
-        assert "API Error" in str(exc_info.value)
-        mock_logger.error.assert_called_once()
-
-    @patch('app.services.ai_email_generator_service.logger')
-    def test_generate_email_parse_error(self, mock_logger, mock_openai_client, email_generation_params):
-        """Test error handling when parsing API response fails."""
-        # Arrange
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message = MagicMock()
-        mock_response.choices[0].message.content = "Invalid JSON"
-        mock_openai_client.chat.completions.create.return_value = mock_response
-        
-        # Act & Assert
-        with pytest.raises(Exception) as exc_info:
-            generate_email(**email_generation_params)
-        
-        assert "Failed to parse AI response" in str(exc_info.value)
-        mock_logger.error.assert_called_once()
 
 
 class TestBuildEmailPrompt:
-    """Tests for build_email_prompt function."""
+    """Tests for the build_email_prompt function."""
 
-    def test_build_email_prompt_all_fields(self, email_generation_params):
-        """Test building an email prompt with all optional fields."""
-        # Act
-        prompt = build_email_prompt(**email_generation_params)
+    def test_build_email_prompt_with_all_parameters(self, email_gen_params):
+        """Test that the prompt includes all provided parameters."""
+        result = build_email_prompt(**email_gen_params)
         
-        # Assert
-        assert "John Doe" in prompt
-        assert "Technology" in prompt
-        assert "Time management" in prompt
-        assert "Team collaboration" in prompt
-        assert "Acme Inc" in prompt
-        assert "CTO" in prompt
-        assert "Met at TechConf 2023" in prompt
+        # Check that all the parameters are included in the prompt
+        assert email_gen_params["recipient_name"] in result
+        assert email_gen_params["industry"] in result
+        assert all(point in result for point in email_gen_params["pain_points"])
+        assert email_gen_params["recipient_company"] in result
+        assert email_gen_params["recipient_job_title"] in result
+        assert email_gen_params["personalization_notes"] in result
+        
+        # Check that the formatting instructions are included
+        assert "JSON" in result
+        assert "subject" in result
+        assert "body_text" in result
+        assert "body_html" in result
 
-    def test_build_email_prompt_minimal_fields(self):
-        """Test building an email prompt with only required fields."""
-        # Act
-        prompt = build_email_prompt(
-            recipient_name="John Doe",
-            industry="Technology",
-            pain_points=["Time management"]
+    def test_build_email_prompt_with_minimal_parameters(self):
+        """Test prompt building with only required parameters."""
+        minimal_params = {
+            "recipient_name": "Jane Smith",
+            "industry": "Healthcare",
+            "pain_points": ["Patient scheduling"]
+        }
+        
+        result = build_email_prompt(**minimal_params)
+        
+        # Check that mandatory parameters are included
+        assert minimal_params["recipient_name"] in result
+        assert minimal_params["industry"] in result
+        assert minimal_params["pain_points"][0] in result
+        
+        # Optional parameters should not be present
+        assert "personalization notes" not in result.lower()
+        assert "Additional personalization" not in result
+        
+        # But the formatting instructions should still be there
+        assert "JSON" in result
+
+
+class TestBuildFollowUpPrompt:
+    """Tests for the build_follow_up_prompt function."""
+
+    def test_build_follow_up_prompt_with_all_parameters(self, follow_up_params):
+        """Test that the follow-up prompt includes all provided parameters."""
+        result = build_follow_up_prompt(**follow_up_params)
+        
+        # Check that all parameters are included
+        assert follow_up_params["recipient_name"] in result
+        assert follow_up_params["original_subject"] in result
+        assert follow_up_params["original_body"] in result
+        assert f"follow-up #{follow_up_params['follow_up_number']}" in result
+        assert follow_up_params["recipient_company"] in result
+        assert follow_up_params["recipient_job_title"] in result
+        assert follow_up_params["new_approach"] in result
+        
+        # Check that formatting instructions are included
+        assert "JSON" in result
+        assert "subject" in result
+        assert "body_text" in result
+        assert "body_html" in result
+
+    def test_build_follow_up_prompt_with_minimal_parameters(self):
+        """Test follow-up prompt building with only required parameters."""
+        minimal_params = {
+            "original_subject": "Initial outreach",
+            "original_body": "Hi Jane, just reaching out about your software needs...",
+            "recipient_name": "Jane Smith",
+            "follow_up_number": 2
+        }
+        
+        result = build_follow_up_prompt(**minimal_params)
+        
+        # Check that mandatory parameters are included
+        assert minimal_params["recipient_name"] in result
+        assert minimal_params["original_subject"] in result
+        assert minimal_params["original_body"] in result
+        assert f"follow-up #{minimal_params['follow_up_number']}" in result
+        
+        # Optional parameters should not be included
+        assert "new approach" not in result.lower()
+        
+        # But the formatting instructions should still be there
+        assert "JSON" in result
+
+
+class TestCallOpenAiApi:
+    """Tests for the call_openai_api function."""
+
+    @patch('app.services.ai_email_generator_service.client')
+    def test_call_openai_api_production(self, mock_client):
+        """Test OpenAI API call in production mode."""
+        # Setup the mock
+        mock_response = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        
+        # Set environment to production
+        with patch('app.services.ai_email_generator_service.is_test_mode', False):
+            # Call the function
+            prompt = "Test prompt"
+            system_role = "Test system role"
+            result = call_openai_api(prompt, system_role)
+            
+            # Verify the client was called correctly
+            mock_client.chat.completions.create.assert_called_once()
+            call_args = mock_client.chat.completions.create.call_args[1]
+            assert call_args['messages'][0]['content'] == system_role
+            assert call_args['messages'][1]['content'] == prompt
+            assert result == mock_response
+
+    @patch('app.services.ai_email_generator_service.client')
+    def test_call_openai_api_error_handling(self, mock_client):
+        """Test error handling in OpenAI API call."""
+        # Setup the mock to raise an exception
+        mock_client.chat.completions.create.side_effect = Exception("API Error")
+        
+        # Set environment to production
+        with patch('app.services.ai_email_generator_service.is_test_mode', False):
+            # Call the function and expect an exception
+            with pytest.raises(Exception) as excinfo:
+                call_openai_api("Test prompt", "Test system role")
+            
+            # Verify the error message
+            assert "Failed to generate content" in str(excinfo.value)
+
+    def test_call_openai_api_test_mode(self):
+        """Test OpenAI API call in test mode."""
+        # Set environment to test
+        with patch('app.services.ai_email_generator_service.is_test_mode', True):
+            # Call the function
+            result = call_openai_api("Test prompt", "Test system role")
+            
+            # Verify we get a mock response
+            assert result is not None
+            assert hasattr(result, 'choices')
+            assert len(result.choices) > 0
+            assert hasattr(result.choices[0], 'message')
+            assert hasattr(result.choices[0].message, 'content')
+            # Verify the content is valid JSON
+            content = result.choices[0].message.content
+            data = json.loads(content)
+            assert "subject" in data
+            assert "body_text" in data
+            assert "body_html" in data
+
+
+class TestParseEmailResponse:
+    """Tests for the parse_email_response function."""
+
+    def test_parse_valid_response(self, mock_openai_response):
+        """Test parsing a valid OpenAI response."""
+        result = parse_email_response(mock_openai_response)
+        
+        assert isinstance(result, EmailGenResponse)
+        assert result.subject == "Test Subject Line"
+        assert result.body_text == "This is a test plain text email body."
+        assert result.body_html == "<p>This is a test HTML email body.</p>"
+
+    def test_parse_invalid_response(self):
+        """Test parsing an invalid response (missing required fields)."""
+        # Create a response with missing fields
+        mock_response = Mock()
+        mock_message = Mock()
+        mock_message.content = json.dumps({
+            "subject": "Test Subject Line",
+            # Missing body_text and body_html
+        })
+        mock_choice = Mock()
+        mock_choice.message = mock_message
+        mock_response.choices = [mock_choice]
+        
+        # Should raise an exception
+        with pytest.raises(Exception) as excinfo:
+            parse_email_response(mock_response)
+        
+        assert "Failed to parse AI response" in str(excinfo.value)
+
+    def test_parse_non_json_response(self):
+        """Test parsing a response that doesn't contain valid JSON."""
+        # Create a response with invalid JSON
+        mock_response = Mock()
+        mock_message = Mock()
+        mock_message.content = "This is not JSON"
+        mock_choice = Mock()
+        mock_choice.message = mock_message
+        mock_response.choices = [mock_choice]
+        
+        # Should raise an exception
+        with pytest.raises(Exception) as excinfo:
+            parse_email_response(mock_response)
+        
+        assert "Failed to parse AI response" in str(excinfo.value)
+
+
+class TestGenerateEmail:
+    """Tests for the generate_email function."""
+
+    @patch('app.services.ai_email_generator_service.build_email_prompt')
+    @patch('app.services.ai_email_generator_service.call_openai_api')
+    @patch('app.services.ai_email_generator_service.parse_email_response')
+    def test_generate_email_success(self, mock_parse, mock_call_api, mock_build_prompt, 
+                                   email_gen_params, mock_openai_response):
+        """Test successful email generation with all parameters."""
+        # Setup mocks
+        mock_build_prompt.return_value = "Mocked prompt"
+        mock_call_api.return_value = mock_openai_response
+        mock_parse.return_value = EmailGenResponse(
+            subject="Test Subject",
+            body_text="Test body text",
+            body_html="<p>Test body HTML</p>"
         )
         
-        # Assert
-        assert "John Doe" in prompt
-        assert "Technology" in prompt
-        assert "Time management" in prompt
-        assert "recipient_company: None" not in prompt  # Should handle None values gracefully
-
-
-class TestParseAIResponse:
-    """Tests for parse_ai_response function."""
-
-    def test_parse_ai_response_valid_json(self, mock_openai_response):
-        """Test parsing a valid JSON response."""
-        # Act
-        result = parse_ai_response(mock_openai_response.choices[0].message.content)
+        # Call the function
+        result = generate_email(**email_gen_params)
         
-        # Assert
-        assert isinstance(result, dict)
-        assert result["subject"] == "Test Email Subject"
-        assert result["body_text"] == "This is a test email body in plain text."
-        assert result["body_html"] == "<p>This is a test email body in HTML.</p>"
+        # Verify mocks were called correctly
+        mock_build_prompt.assert_called_once_with(**email_gen_params)
+        mock_call_api.assert_called_once_with(
+            prompt="Mocked prompt", 
+            system_role="You are an expert cold email copywriter who specializes in writing personalized, effective cold emails that get responses."
+        )
+        mock_parse.assert_called_once_with(mock_openai_response)
+        
+        # Verify result
+        assert isinstance(result, EmailGenResponse)
+        assert result.subject == "Test Subject"
+        assert result.body_text == "Test body text"
+        assert result.body_html == "<p>Test body HTML</p>"
 
-    def test_parse_ai_response_invalid_json(self):
-        """Test parsing an invalid JSON response."""
-        # Act & Assert
-        with pytest.raises(Exception) as exc_info:
-            parse_ai_response("Invalid JSON")
+    @patch('app.services.ai_email_generator_service.build_email_prompt')
+    @patch('app.services.ai_email_generator_service.call_openai_api')
+    def test_generate_email_api_error(self, mock_call_api, mock_build_prompt, email_gen_params):
+        """Test handling of API errors during email generation."""
+        # Setup mocks
+        mock_build_prompt.return_value = "Mocked prompt"
+        mock_call_api.side_effect = Exception("API Error")
         
-        assert "Failed to parse AI response" in str(exc_info.value)
-
-    def test_parse_ai_response_missing_fields(self):
-        """Test parsing a JSON response with missing required fields."""
-        # Arrange
-        invalid_json = json.dumps({"subject": "Test Subject"})  # Missing body fields
+        # Call the function and expect an exception
+        with pytest.raises(Exception) as excinfo:
+            generate_email(**email_gen_params)
         
-        # Act & Assert
-        with pytest.raises(Exception) as exc_info:
-            parse_ai_response(invalid_json)
-        
-        assert "Invalid AI response format" in str(exc_info.value)
-
-
-class TestFormatEmailHtml:
-    """Tests for format_email_html function."""
-
-    def test_format_email_html_plain_text(self):
-        """Test converting plain text to HTML."""
-        # Arrange
-        plain_text = "Line 1\nLine 2\n\nParagraph 2"
-        
-        # Act
-        result = format_email_html(plain_text)
-        
-        # Assert
-        assert "<p>Line 1<br>Line 2</p>" in result
-        assert "<p>Paragraph 2</p>" in result
-
-    def test_format_email_html_already_html(self):
-        """Test handling text that is already HTML."""
-        # Arrange
-        html = "<p>This is already HTML</p>"
-        
-        # Act
-        result = format_email_html(html)
-        
-        # Assert
-        assert result == html  # Should return as-is
-
-    def test_format_email_html_mixed_content(self):
-        """Test handling mixed plain text and HTML content."""
-        # Arrange
-        mixed = "Plain text\n<p>HTML content</p>\nMore plain text"
-        
-        # Act
-        result = format_email_html(mixed)
-        
-        # Assert
-        assert "<p>Plain text</p>" in result
-        assert "<p>HTML content</p>" in result
-        assert "<p>More plain text</p>" in result
+        # Verify the error is passed through
+        assert "API Error" in str(excinfo.value)
 
 
 class TestGenerateFollowUp:
-    """Tests for generate_follow_up function."""
-
-    def test_generate_follow_up_success(self, mock_openai_client, mock_openai_response, follow_up_params):
+    """Tests for the generate_follow_up function."""
+    
+    @patch('app.services.ai_email_generator_service.build_follow_up_prompt')
+    @patch('app.services.ai_email_generator_service.call_openai_api')
+    @patch('app.services.ai_email_generator_service.parse_email_response')
+    def test_generate_follow_up_success(self, mock_parse, mock_call_api, mock_build_prompt, 
+                                       follow_up_params, mock_openai_response):
         """Test successful follow-up email generation."""
-        # Arrange
-        mock_openai_client.chat.completions.create.return_value = mock_openai_response
-        
-        # Act
-        result = generate_follow_up(**follow_up_params)
-        
-        # Assert
-        assert isinstance(result, EmailGenResponse)
-        assert result.subject == "Test Email Subject"
-        assert result.body_text == "This is a test email body in plain text."
-        assert result.body_html == "<p>This is a test email body in HTML.</p>"
-        mock_openai_client.chat.completions.create.assert_called_once()
-
-    def test_generate_follow_up_minimal_params(self, mock_openai_client, mock_openai_response):
-        """Test follow-up email generation with minimal required parameters."""
-        # Arrange
-        mock_openai_client.chat.completions.create.return_value = mock_openai_response
-        
-        # Act
-        result = generate_follow_up(
-            original_subject="Original Subject",
-            original_body="This is the original email body.",
-            recipient_name="John Doe",
-            follow_up_number=1
+        # Setup mocks
+        mock_build_prompt.return_value = "Mocked follow-up prompt"
+        mock_call_api.return_value = mock_openai_response
+        mock_parse.return_value = EmailGenResponse(
+            subject="Re: Test Subject",
+            body_text="Follow-up body text",
+            body_html="<p>Follow-up body HTML</p>"
         )
         
-        # Assert
-        assert isinstance(result, EmailGenResponse)
-        assert result.subject == "Test Email Subject"
-        mock_openai_client.chat.completions.create.assert_called_once()
-
-    @patch('app.services.ai_email_generator_service.logger')
-    def test_generate_follow_up_openai_error(self, mock_logger, mock_openai_client, follow_up_params):
-        """Test error handling when OpenAI API call fails for follow-up generation."""
-        # Arrange
-        mock_openai_client.chat.completions.create.side_effect = Exception("API Error")
+        # Call the function
+        result = generate_follow_up(**follow_up_params)
         
-        # Act & Assert
-        with pytest.raises(Exception) as exc_info:
+        # Verify mocks were called correctly
+        mock_build_prompt.assert_called_once_with(**follow_up_params)
+        mock_call_api.assert_called_once_with(
+            prompt="Mocked follow-up prompt", 
+            system_role="You are an expert cold email copywriter who specializes in writing effective follow-up emails that get responses."
+        )
+        mock_parse.assert_called_once_with(mock_openai_response)
+        
+        # Verify result
+        assert isinstance(result, EmailGenResponse)
+        assert result.subject == "Re: Test Subject"
+        assert result.body_text == "Follow-up body text"
+        assert result.body_html == "<p>Follow-up body HTML</p>"
+
+    @patch('app.services.ai_email_generator_service.build_follow_up_prompt')
+    @patch('app.services.ai_email_generator_service.call_openai_api')
+    def test_generate_follow_up_error(self, mock_call_api, mock_build_prompt, follow_up_params):
+        """Test error handling during follow-up generation."""
+        # Setup mocks
+        mock_build_prompt.return_value = "Mocked follow-up prompt"
+        mock_call_api.side_effect = Exception("API Error")
+        
+        # Call the function and expect an exception
+        with pytest.raises(Exception) as excinfo:
             generate_follow_up(**follow_up_params)
         
-        assert "API Error" in str(exc_info.value)
-        mock_logger.error.assert_called_once()
+        # Verify the error is passed through
+        assert "API Error" in str(excinfo.value)
 
 
 class TestGenerateABTestVariants:
-    """Tests for generate_ab_test_variants function."""
+    """Tests for the generate_ab_test_variants function."""
+    
+    @patch('app.services.ai_email_generator_service.client')
+    def test_generate_ab_test_variants_success(self, mock_client, email_gen_params, mock_openai_response):
+        """Test successful generation of A/B test variants."""
+        # Setup the parameters
+        variants = {
+            "A": "Focus on ROI and business value",
+            "B": "Focus on ease of implementation"
+        }
+        email_gen_params["variants"] = variants
+        
+        # Setup the mock
+        mock_client.chat.completions.create.return_value = mock_openai_response
+        
+        # Set environment to production
+        with patch('app.services.ai_email_generator_service.is_test_mode', False):
+            # Call the function
+            result = generate_ab_test_variants(
+                recipient_name=email_gen_params["recipient_name"],
+                industry=email_gen_params["industry"],
+                pain_points=email_gen_params["pain_points"],
+                variants=variants,
+                recipient_company=email_gen_params["recipient_company"],
+                recipient_job_title=email_gen_params["recipient_job_title"]
+            )
+            
+            # Verify the result
+            assert isinstance(result, dict)
+            assert "A" in result and "B" in result
+            assert isinstance(result["A"], EmailGenResponse)
+            assert isinstance(result["B"], EmailGenResponse)
+            assert result["A"].variant == "A"
+            assert result["B"].variant == "B"
+            
+            # Verify the API was called twice (once for each variant)
+            assert mock_client.chat.completions.create.call_count == 2
 
-    @patch('app.services.ai_email_generator_service.client.chat.completions.create')
-    def test_generate_ab_test_variants_success(self, mock_create, ab_test_params):
-        """Test successful A/B test variant generation."""
-        # Arrange
-        mock_responses = {}
-        for variant_key in ab_test_params["variants"].keys():
-            mock_response = MagicMock()
-            mock_response.choices = [MagicMock()]
-            mock_response.choices[0].message = MagicMock()
-            mock_response.choices[0].message.content = json.dumps({
-                "subject": f"Test Subject {variant_key}",
-                "body_text": f"This is test variant {variant_key} in plain text.",
-                "body_html": f"<p>This is test variant {variant_key} in HTML.</p>"
-            })
-            mock_responses[variant_key] = mock_response
+    @patch('app.services.ai_email_generator_service.client')
+    def test_generate_ab_test_variants_error(self, mock_client, email_gen_params):
+        """Test error handling during A/B test variant generation."""
+        # Setup the parameters
+        variants = {
+            "A": "Focus on ROI",
+            "B": "Focus on ease of use"
+        }
+        email_gen_params["variants"] = variants
+        
+        # Setup the mock to raise an exception
+        mock_client.chat.completions.create.side_effect = Exception("API Error")
+        
+        # Set environment to production
+        with patch('app.services.ai_email_generator_service.is_test_mode', False):
+            # Call the function and expect an exception
+            with pytest.raises(Exception) as excinfo:
+                generate_ab_test_variants(
+                    recipient_name=email_gen_params["recipient_name"],
+                    industry=email_gen_params["industry"],
+                    pain_points=email_gen_params["pain_points"],
+                    variants=variants,
+                    recipient_company=email_gen_params["recipient_company"],
+                    recipient_job_title=email_gen_params["recipient_job_title"]
+                )
+            
+            # Verify the error message
+            assert "API Error" in str(excinfo.value)
 
-        # Setup the side effect to return different responses for each call
-        mock_create.side_effect = list(mock_responses.values())
+    @patch('app.services.ai_email_generator_service.client')
+    def test_generate_ab_test_variants_parse_error(self, mock_client, email_gen_params):
+        """Test handling of response parsing errors during A/B test variant generation."""
+        # Setup the parameters
+        variants = {
+            "A": "Focus on ROI",
+            "B": "Focus on ease of use"
+        }
+        email_gen_params["variants"] = variants
         
-        # Act
-        result = generate_ab_test_variants(**ab_test_params)
+        # Create a mock response with invalid JSON
+        mock_response = Mock()
+        mock_message = Mock()
+        mock_message.content = "This is not JSON"
+        mock_choice = Mock()
+        mock_choice.message = mock_message
+        mock_response.choices = [mock_choice]
         
-        # Assert
-        assert len(result) == 2
-        assert "A" in result and "B" in result
-        assert isinstance(result["A"], EmailGenResponse)
-        assert isinstance(result["B"], EmailGenResponse)
-        assert result["A"].subject == "Test Subject A"
-        assert result["B"].subject == "Test Subject B"
-        assert result["A"].variant == "A"
-        assert result["B"].variant == "B"
-        assert mock_create.call_count == 2
+        # Setup the mock to return the invalid response
+        mock_client.chat.completions.create.return_value = mock_response
+        
+        # Set environment to production
+        with patch('app.services.ai_email_generator_service.is_test_mode', False):
+            # Call the function and expect an exception
+            with pytest.raises(Exception) as excinfo:
+                generate_ab_test_variants(
+                    recipient_name=email_gen_params["recipient_name"],
+                    industry=email_gen_params["industry"],
+                    pain_points=email_gen_params["pain_points"],
+                    variants=variants,
+                    recipient_company=email_gen_params["recipient_company"],
+                    recipient_job_title=email_gen_params["recipient_job_title"]
+                )
+            
+            # Verify the error message
+            assert "Failed to parse AI response" in str(excinfo.value)
 
-    @patch('app.services.ai_email_generator_service.client.chat.completions.create')
-    @patch('app.services.ai_email_generator_service.logger')
-    def test_generate_ab_test_variants_api_error(self, mock_logger, mock_create, ab_test_params):
-        """Test error handling when OpenAI API call fails for AB test generation."""
-        # Arrange
-        mock_create.side_effect = Exception("API Error")
-        
-        # Act & Assert
-        with pytest.raises(Exception) as exc_info:
-            generate_ab_test_variants(**ab_test_params)
-        
-        assert "API Error" in str(exc_info.value)
-        mock_logger.error.assert_called()
 
-    @patch('app.services.ai_email_generator_service.client.chat.completions.create')
-    @patch('app.services.ai_email_generator_service.logger')
-    def test_generate_ab_test_variants_parse_error(self, mock_logger, mock_create, ab_test_params):
-        """Test error handling when parsing API response fails for AB test generation."""
-        # Arrange
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message = MagicMock()
-        mock_response.choices[0].message.content = "Invalid JSON"
-        mock_create.return_value = mock_response
-        
-        # Act & Assert
-        with pytest.raises(Exception) as exc_info:
-            generate_ab_test_variants(**ab_test_params)
-        
-        assert "Failed to parse AI response" in str(exc_info.value)
-        mock_logger.error.assert_called() 
+# Integration-like tests (still using mocks, but testing the full flow)
+class TestEmailGenerationIntegration:
+    """Integration-like tests for the email generation flow."""
+    
+    def test_email_generation_flow(self, email_gen_params):
+        """Test the complete flow of email generation."""
+        # Force test mode
+        with patch('app.services.ai_email_generator_service.is_test_mode', True):
+            # Generate an email
+            result = generate_email(**email_gen_params)
+            
+            # Verify the result structure
+            assert isinstance(result, EmailGenResponse)
+            assert result.subject
+            assert result.body_text
+            assert result.body_html
+    
+    def test_follow_up_generation_flow(self, follow_up_params):
+        """Test the complete flow of follow-up generation."""
+        # Force test mode
+        with patch('app.services.ai_email_generator_service.is_test_mode', True):
+            # Generate a follow-up
+            result = generate_follow_up(**follow_up_params)
+            
+            # Verify the result structure
+            assert isinstance(result, EmailGenResponse)
+            assert result.subject
+            assert result.body_text
+            assert result.body_html 

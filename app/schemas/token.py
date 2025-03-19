@@ -13,6 +13,13 @@ class Token(BaseModel):
     expires_at: datetime
 
 
+class TokenWithoutRefresh(BaseModel):
+    """Authentication token response without refresh token for enhanced security."""
+    access_token: str
+    token_type: str
+    expires_at: datetime
+
+
 class TokenPayload(BaseModel):
     """JWT token payload."""
     sub: Optional[str] = None

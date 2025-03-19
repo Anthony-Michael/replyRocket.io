@@ -5,9 +5,10 @@ from fastapi.encoders import jsonable_encoder
 from pydantic import EmailStr
 from sqlalchemy.orm import Session
 
-from app import crud, models, schemas
+from app import models, schemas
 from app.api import deps
 from app.core.config import settings
+from app.services import user_service
 
 router = APIRouter()
 
@@ -47,7 +48,7 @@ def update_user_me(
     if email is not None:
         user_in.email = email
     
-    user = crud.user.update(db, db_obj=current_user, obj_in=user_in)
+    user = user_service.update_user(db, current_user.id, user_in)
     return user
 
 
@@ -61,7 +62,7 @@ def update_smtp_config(
     """
     Update SMTP configuration for the current user.
     """
-    user = crud.user.update_smtp_config(
+    user = user_service.update_smtp_config(
         db=db,
         user_id=current_user.id,
         smtp_config={
@@ -87,7 +88,8 @@ def read_users(
     """
     Retrieve users. Admin only.
     """
-    users = crud.user.get_multi(db, skip=skip, limit=limit)
+    # Get users through the service layer
+    users = user_service.get_users(db, skip=skip, limit=limit)
     return users
 
 
@@ -101,13 +103,8 @@ def create_user(
     """
     Create new user. Admin only.
     """
-    user = crud.user.get_by_email(db, email=user_in.email)
-    if user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The user with this email already exists in the system",
-        )
-    user = crud.user.create(db, obj_in=user_in)
+    # Create user through the service layer
+    user = user_service.create_user(db, user_in)
     return user
 
 
@@ -120,7 +117,8 @@ def read_user_by_id(
     """
     Get a specific user by id.
     """
-    user = crud.user.get(db, id=user_id)
+    user = user_service.get_user(db, user_id)
+    
     if user == current_user:
         return user
     if not current_user.is_superuser:
@@ -142,11 +140,6 @@ def update_user(
     """
     Update a user. Admin only.
     """
-    user = crud.user.get(db, id=user_id)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="The user with this id does not exist in the system",
-        )
-    user = crud.user.update(db, db_obj=user, obj_in=user_in)
+    # Update user through the service layer
+    user = user_service.update_user(db, user_id, user_in)
     return user 

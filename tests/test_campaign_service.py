@@ -17,7 +17,8 @@ from app.services.campaign_service import (
     update_campaign,
     delete_campaign,
     get_active_campaigns,
-    configure_ab_testing
+    configure_ab_testing,
+    update_campaign_stats
 )
 from app import schemas, models
 from app.core.exception_handlers import DatabaseError, EntityNotFoundError, ResourceConflictError
@@ -74,6 +75,12 @@ def mock_campaign(mock_campaign_id, mock_user_id):
     campaign.is_active = True
     campaign.created_at = "2023-01-01T00:00:00"
     campaign.updated_at = "2023-01-01T00:00:00"
+    campaign.total_emails = 10
+    campaign.opened_emails = 5
+    campaign.replied_emails = 2
+    campaign.converted_emails = 1
+    campaign.ab_test_active = False
+    campaign.ab_test_variants = None
     return campaign
 
 
@@ -335,6 +342,47 @@ class TestConfigureABTesting:
         mock_db.commit.assert_called_once()
         mock_db.refresh.assert_called_once()
 
+    def test_configure_ab_testing_disable(self, mock_db, mock_campaign_id, mock_campaign):
+        """Test disabling A/B testing for a campaign."""
+        # Arrange
+        mock_campaign.ab_test_active = True
+        mock_campaign.ab_test_variants = {"A": "Test A", "B": "Test B"}
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_campaign
+        
+        # Act
+        result = configure_ab_testing(mock_db, mock_campaign_id, None, False)
+        
+        # Assert
+        assert result == mock_campaign
+        assert result.ab_test_active is False
+        mock_db.add.assert_called_once()
+        mock_db.commit.assert_called_once()
+        mock_db.refresh.assert_called_once()
+
+    def test_configure_ab_testing_update_variants(self, mock_db, mock_campaign_id, mock_campaign):
+        """Test updating A/B test variants for a campaign."""
+        # Arrange
+        mock_campaign.ab_test_active = True
+        mock_campaign.ab_test_variants = {"A": "Original A", "B": "Original B"}
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_campaign
+        
+        new_variants = {
+            "A": "New approach A",
+            "B": "New approach B",
+            "C": "New approach C"
+        }
+        
+        # Act
+        result = configure_ab_testing(mock_db, mock_campaign_id, new_variants, True)
+        
+        # Assert
+        assert result == mock_campaign
+        assert result.ab_test_active is True
+        assert result.ab_test_variants == new_variants
+        mock_db.add.assert_called_once()
+        mock_db.commit.assert_called_once()
+        mock_db.refresh.assert_called_once()
+
     def test_configure_ab_testing_campaign_not_found(self, mock_db, mock_campaign_id):
         """Test A/B testing configuration for non-existent campaign."""
         # Arrange
@@ -367,6 +415,117 @@ class TestConfigureABTesting:
         # Act & Assert
         with pytest.raises(DatabaseError) as exc_info:
             configure_ab_testing(mock_db, mock_campaign_id, ab_variants, True)
+        
+        assert "Database error" in str(exc_info.value)
+        mock_db.add.assert_called_once()
+        mock_db.commit.assert_called_once()
+        mock_db.refresh.assert_not_called()
+
+
+class TestUpdateCampaignStats:
+    """Tests for update_campaign_stats function."""
+
+    def test_update_stats_success(self, mock_db, mock_campaign_id, mock_campaign):
+        """Test successful campaign stats update."""
+        # Arrange
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_campaign
+        original_total = mock_campaign.total_emails
+        original_opened = mock_campaign.opened_emails
+        
+        stats_update = {
+            "total_emails": original_total + 5,
+            "opened_emails": original_opened + 3
+        }
+        
+        # Act
+        result = update_campaign_stats(mock_db, mock_campaign_id, stats_update)
+        
+        # Assert
+        assert result == mock_campaign
+        assert result.total_emails == original_total + 5
+        assert result.opened_emails == original_opened + 3
+        mock_db.add.assert_called_once()
+        mock_db.commit.assert_called_once()
+        mock_db.refresh.assert_called_once()
+
+    def test_update_stats_partial(self, mock_db, mock_campaign_id, mock_campaign):
+        """Test updating only some campaign stats fields."""
+        # Arrange
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_campaign
+        original_total = mock_campaign.total_emails
+        original_replied = mock_campaign.replied_emails
+        
+        # Only update replied_emails
+        stats_update = {
+            "replied_emails": original_replied + 1
+        }
+        
+        # Act
+        result = update_campaign_stats(mock_db, mock_campaign_id, stats_update)
+        
+        # Assert
+        assert result == mock_campaign
+        assert result.total_emails == original_total  # Unchanged
+        assert result.replied_emails == original_replied + 1  # Updated
+        mock_db.add.assert_called_once()
+        mock_db.commit.assert_called_once()
+        mock_db.refresh.assert_called_once()
+
+    def test_update_stats_campaign_not_found(self, mock_db, mock_campaign_id):
+        """Test updating stats for a non-existent campaign."""
+        # Arrange
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+        
+        stats_update = {
+            "total_emails": 15,
+            "opened_emails": 8
+        }
+        
+        # Act & Assert
+        with pytest.raises(EntityNotFoundError) as exc_info:
+            update_campaign_stats(mock_db, mock_campaign_id, stats_update)
+        
+        assert "Campaign not found" in str(exc_info.value)
+        mock_db.add.assert_not_called()
+        mock_db.commit.assert_not_called()
+
+    def test_update_stats_invalid_field(self, mock_db, mock_campaign_id, mock_campaign):
+        """Test handling invalid stats field names."""
+        # Arrange
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_campaign
+        
+        # Include an invalid field name
+        stats_update = {
+            "total_emails": 15,
+            "invalid_field": 8
+        }
+        
+        # Act
+        result = update_campaign_stats(mock_db, mock_campaign_id, stats_update)
+        
+        # Assert
+        assert result == mock_campaign
+        assert result.total_emails == 15
+        # Should not have set the invalid field
+        assert not hasattr(result, "invalid_field")
+        mock_db.add.assert_called_once()
+        mock_db.commit.assert_called_once()
+        mock_db.refresh.assert_called_once()
+
+    def test_update_stats_db_error(self, mock_db, mock_campaign_id, mock_campaign):
+        """Test database error handling during stats update."""
+        # Arrange
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_campaign
+        mock_db.commit.side_effect = SQLAlchemyError("Database error")
+        
+        stats_update = {
+            "total_emails": 15,
+            "opened_emails": 8
+        }
+        
+        # Act & Assert
+        with pytest.raises(DatabaseError) as exc_info:
+            update_campaign_stats(mock_db, mock_campaign_id, stats_update)
         
         assert "Database error" in str(exc_info.value)
         mock_db.add.assert_called_once()

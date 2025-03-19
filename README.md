@@ -1,240 +1,161 @@
 # ReplyRocket.io
 
-AI-powered email reply generation for busy professionals. 
+ReplyRocket.io is a powerful email campaign automation platform designed to help you create personalized outreach campaigns that get results.
 
 ## Features
 
-- Generate personalized email responses with AI
-- Manage email campaigns
-- Track email engagement
-- Smart response templates
-- Seamless CRM integrations
+- 🚀 **AI-Powered Email Generation**: Create personalized cold emails using AI
+- 📊 **Campaign Analytics**: Track opens, replies, and conversions
+- 🧪 **A/B Testing**: Test different messaging approaches to see what works best
+- 📅 **Automated Follow-ups**: Schedule follow-up sequences for non-responders
+- 🔒 **Secure Authentication**: JWT-based authentication with refresh tokens
 
-## Table of Contents
-
-- [Installation](#installation)
-- [Environment Setup](#environment-setup)
-- [Development](#development)
-- [Testing](#testing)
-- [Deployment](#deployment)
-- [Security Considerations](#security-considerations)
-- [API Documentation](#api-documentation)
-- [Contributing](#contributing)
-- [License](#license)
-
-## Installation
+## Getting Started
 
 ### Prerequisites
 
 - Python 3.10+
-- PostgreSQL 14+
-- Docker & Docker Compose (optional)
+- PostgreSQL
+- Node.js 16+ (for frontend)
 
-### Local Setup
+### Installation
 
 1. Clone the repository:
-
-```bash
-git clone https://github.com/yourusername/replyrocket.io.git
-cd replyrocket.io
-```
+   ```bash
+   git clone https://github.com/yourusername/replyrocket.io.git
+   cd replyrocket.io
+   ```
 
 2. Set up a virtual environment:
-
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
 
 3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-```bash
-pip install -r requirements.txt
-```
-
-4. Copy the environment example file and configure it:
-
-```bash
-cp .env.example .env
-# Edit .env with your configuration
-```
+4. Set up environment variables:
+   ```bash
+   cp .env.example .env
+   # Edit .env file with your configuration
+   ```
 
 5. Run database migrations:
+   ```bash
+   alembic upgrade head
+   ```
 
-```bash
-alembic upgrade head
-```
+6. Start the application:
+   ```bash
+   uvicorn app.main:app --reload
+   ```
 
-6. Start the development server:
-
-```bash
-uvicorn app.main:app --reload
-```
-
-### Docker Setup
-
-1. Build and start the containers:
-
-```bash
-docker-compose up -d
-```
-
-2. Run initial migrations:
-
-```bash
-docker-compose exec app alembic upgrade head
-```
-
-## Environment Setup
-
-ReplyRocket.io uses environment-specific configurations for development, staging, and production environments.
-
-### Required Environment Variables
-
-Copy the `.env.example` file to `.env` for your environment and set the following variables:
-
-```
-# Environment
-ENVIRONMENT=development  # Options: development, staging, production
-
-# Security
-SECRET_KEY=  # Generate with: openssl rand -hex 32
-
-# Database
-POSTGRES_SERVER=localhost
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=
-POSTGRES_DB=replyrocket
-
-# API Keys
-OPENAI_API_KEY=  # Required for AI email generation
-```
-
-### Environment-Specific Configuration
-
-The application loads configuration based on the `ENVIRONMENT` variable:
-
-- **Development**: Relaxed security, debug logs, development database
-- **Staging**: Stricter security, required env variables, staging database
-- **Production**: Strict security, all critical variables required, optimized for performance
-
-### Generating Secure Keys
-
-Generate a strong secret key:
-
-```bash
-# Option 1: Using Python
-python -c "import secrets; print(secrets.token_hex(32))"
-
-# Option 2: Using OpenSSL
-openssl rand -hex 32
-```
-
-## Development
-
-### Code Structure
+## Project Structure
 
 ```
 app/
-├── api/              # API endpoints
-├── core/             # Core configuration
-├── crud/             # Database CRUD operations
-├── db/               # Database setup
-├── models/           # SQLAlchemy models
-├── schemas/          # Pydantic schemas
-├── services/         # Business logic
-└── utils/            # Utility functions
-tests/                # Test files
-alembic/              # Database migrations
+├── api/                  # API endpoints
+│   └── api_v1/
+│       └── endpoints/    # Route handlers
+├── core/                 # Core functionality (config, security)
+├── crud/                 # Database operations
+├── db/                   # Database setup and session management
+├── models/               # Database models
+├── schemas/              # Pydantic schemas for validation
+├── services/             # Business logic layer
+│   ├── user_service.py
+│   ├── campaign_service.py
+│   ├── email_service.py
+│   └── ai_email_generator_service.py
+└── main.py               # Application entry point
+
+tests/                    # Test suite
+├── test_*.py             # Unit and integration tests
+└── utils/                # Testing utilities
 ```
 
-### Running the Development Server
+## Architecture
+
+ReplyRocket.io follows a layered architecture pattern:
+
+1. **API Layer**: HTTP interface with request validation
+2. **Service Layer**: Business logic implementation
+3. **CRUD Layer**: Database operations
+4. **Model Layer**: Database schema definitions
+
+This architecture ensures separation of concerns and testability.
+
+## Testing Strategy
+
+Our testing strategy is comprehensive, covering all layers of the application:
+
+### Unit Tests
+
+Unit tests focus on testing individual components in isolation. We use pytest for our testing framework and unittest.mock for isolating components.
 
 ```bash
-uvicorn app.main:app --reload
+# Run all unit tests
+python -m pytest
+
+# Run specific test file
+python -m pytest tests/test_campaign_service.py
+
+# Run with coverage report
+python tests/run_coverage.py
 ```
 
-### Database Migrations
+### Integration Tests
 
-Create a new migration:
+Integration tests ensure that different components work together correctly.
 
 ```bash
-alembic revision --autogenerate -m "Description of changes"
+# Run integration tests
+python -m pytest tests/integration/
 ```
 
-Apply migrations:
+### Stress Tests
+
+Stress tests evaluate system performance under high load.
 
 ```bash
-alembic upgrade head
+# Run stress tests
+python -m pytest tests/test_campaign_stress.py
 ```
 
-## Testing
+### Code Coverage
 
-Run tests with pytest:
+We aim for high test coverage to ensure code quality and reliability.
 
 ```bash
-pytest
+# Generate coverage report
+python tests/run_coverage.py
+
+# View HTML coverage report
+# Open htmlcov/index.html in your browser
 ```
 
-Generate test coverage report:
-
-```bash
-pytest --cov=app tests/
-```
-
-## Deployment
-
-See the [deploy.md](deploy.md) file for detailed deployment instructions.
-
-### Quick Production Deployment
-
-1. Configure production environment:
-
-```bash
-cp .env.example .env.production
-# Edit .env.production with production values
-```
-
-2. Deploy with Docker Compose:
-
-```bash
-docker-compose -f docker-compose.prod.yml up -d
-```
-
-## Security Considerations
-
-### Environment Variables
-
-- **Never commit** `.env` files to version control
-- **Never hardcode** sensitive information in code
-- Use **strong, unique** keys for production
-- Rotate secrets regularly
-
-### Database Security
-
-- Use strong passwords
-- Limit database user permissions
-- Configure database connection pooling properly
-- Back up your database regularly
-
-### API Security
-
-- Use HTTPS in production
-- Implement rate limiting
-- Validate all inputs
-- Use proper authentication and authorization
+For more detailed information about our testing approach, see [tests/README.md](tests/README.md).
 
 ## API Documentation
 
-When the server is running, access the interactive API documentation at:
+When the application is running, you can access the API documentation at:
 
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/my-feature`
+3. Commit your changes: `git commit -am 'Add my feature'`
+4. Push to the branch: `git push origin feature/my-feature`
+5. Submit a pull request
+
+Please ensure that all tests pass and code coverage is maintained before submitting a pull request.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details. 
+This project is licensed under the MIT License - see the LICENSE file for details. 
